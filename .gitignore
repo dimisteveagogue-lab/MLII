@@ -36,3 +36,12 @@ dist/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Logs and temporary files
+.Rproj.user/
+*.log
+*.tex
+positron_test_setup_files/
+
+#Ignore heavy files
+*.pdf

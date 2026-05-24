@@ -1,0 +1,429 @@
+---
+title: "Module 1 Homework"
+author: "Dimitri AGOGUE"
+format: html
+editor: visual
+---
+
+```{r setup}
+#| include: FALSE
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+## 1. Classification vs Regression - Inference or Prediction? (2 points) {.unnumbered}
+
+**(1.1)** We are interested in predicting the % change in the USD/Euro exchange rate in relation to the weekly changes in the world stock markets. Hence we collect weekly data for all of 2012. For each week we record the % change in the USD/Euro, the % change in the US market, the % change in the British market, and the % change in the German market.
+
+- **Regression problem**, because the response variable (% change in the USF/Euro exchange rate) is continuous.
+
+- **Prediction**, since the aim is to predict future value of the response based of provided features.
+
+- $n = 52$
+
+- $p = 3 \:\text{predictors}$
+
+**(1.2)** A streaming service wants to understand which user behaviors are most strongly associated with cancellation of a subscription within the first 90 days. They examine the records of 12,000 recent sign-ups. For each user, they have recorded whether the user cancelled in the first 90 days, number of titles watched in the first 30 days, total minutes streamed in the first 30 days, payment plan, device type, and six other behavioral variables.
+
+- **Classification problem**, because the response variable (User cancelled in the first 90 days) is categorical.
+
+- **Inference**, since the main focus here is to identify strong associations between the response and the predictors
+
+-  $n = 12000$
+
+- $p = 10 \:\text{predictors}$
+
+**(1.3)** A regional power utility needs to forecast tomorrow's peak electricity demand (in megawatts) so it can schedule generation capacity. They have a five-year history of daily peak demand. For each day they have recorded the peak demand, average temperature, average humidity, day of the week, and four other weather and calendar variables.
+
+- **Regression problem**, because the response variable (peak electricity demand) is continuous..
+
+<!-- -->
+
+- **Prediction**, since the goal is to determine tomorrow's peak electricity demand based of prior observations for the past 5 years.
+
+-  n = `r 365*5`
+
+- $p = 7 \:\text{predictors}$
+
+**(1.4)** A bank wants to flag credit card transactions that are likely fraudulent at the moment they occur. They have a labeled history of 200,000 recent transactions, each annotated as fraudulent or legitimate. For each transaction they have recorded the amount, merchant category, time of day, distance from the cardholder's billing address, and 16 other engineered features.
+
+- **Classification problem**, because the response variable (whether a transaction is fraudulent or not) is categorical.
+
+- **Prediction**, since the goal here is to predict whether a transaction is fraudulent at the time where it is occurring, based of 200,000 previously recorded transactions.
+
+-  $n = 200,000$
+
+- $p = 20 \:\text{predictors}$
+
+## 2. Describe the differences between a parametric and a non-parametric statistical learning approach (4 points) {.unnumbered}
+
+What are the advantages of a parametric approach to regression or classification as opposed to a non-parametric approach? What are its disadvantages?
+
+**(2.1)** Ask an LLM to list two advantages of a parametric approach. Paste the LLM's answer. Then critique it: which items are well-supported, which are overstated or misleading, and what (if anything) is missing? Add at least one advantage the LLM did not produce. (2 points - discussion)
+
+- Two key advantages of a **parametric approach** in statistics/data science are:
+
+  - **Higher statistical power** — When assumptions such as normality and equal variance are met, parametric tests extract more information from the data (using means, variances, and distributional structure), making them more sensitive and precise than non‑parametric methods.
+
+  - **More efficient estimation** — Parametric models rely on a small set of parameters (e.g., mean and variance), allowing faster computation, clearer interpretation, and stronger inferential capabilities, especially with large datasets.
+
+- **Critique:** The LLM supports well the strength and better precision of parametric approaches in situations where the assumptions made are in agreement with the characteristics of the true relationship. But the superior statistical power of parametric approaches over non-parametric ones seems somewhat overstated or not sufficiently nuanced. There are indeed settings where non-parametric models/methods outperform parametric approaches, for instance, when the true relationship is more complex. Finally, we could add the relative simplicity in implementation, and the good performance even with relatively small datasets as other advantages of parametric methods.
+
+**(2.2)** This time, you write first, then have the LLM critique your answer. List two disadvantages of a parametric approach. Paste your answer into the LLM and ask it to critique your answer. What do you think of the LLM's critique? Is it justified? What (if anything) is missing from the LLM's critique? (2 points - discussion)
+
+- Two disadvantages of parametric approaches:
+
+  - **High bias** : If strong formulated assumptions are not met, a parametric model results in highly biased predictions.
+
+  - **Under-fitting**: Parametric approaches can be too simplistic or too rigid, which would lead to model performing poorly.
+
+- LLM's critiques:
+
+  - ::: {}
+    ## Critiques of the stated disadvantages
+    :::
+
+    ### **High bias**
+
+    Your statement is directionally right, but it’s incomplete and slightly overstated.
+
+    **Critiques:**
+
+    - **Bias only increases when assumptions are *violated*, not inherently because the model is parametric.** Parametric models can be extremely low‑bias when the assumed form is correct.
+
+    - **“Highly biased predictions” is too vague.** Bias depends on *which* assumption is violated (linearity, homoscedasticity, normality, independence), and the severity varies.
+
+    - **You should distinguish between *model bias* and *estimator bias*.** Parametric models can have unbiased estimators even when the model itself is misspecified.
+
+    - **Not all assumption violations cause large bias.** For example, mild non‑normality often barely affects regression estimates.
+
+    A sharper version would specify *which* assumptions matter and *how* they distort estimates.
+
+    ### **Under‑fitting**
+
+    This is also correct in spirit, but it needs nuance.
+
+    **Critiques:**
+
+    - **Under‑fitting is not inherent to parametric methods.** It occurs only when the chosen parametric form is too simple relative to the true data‑generating process.
+
+    - **Parametric models can be extremely flexible.** Generalized additive models, splines, and high‑order polynomials are still parametric but can fit complex patterns.
+
+    - **The issue is *model selection*, not parametric modeling itself.** A poorly chosen parametric form underfits; a well‑chosen one does not.
+
+    - **You should contrast under‑fitting with over‑fitting.** Parametric models can also overfit when too many parameters are used — the critique should acknowledge both sides.
+
+    A more precise critique would emphasize that *rigidity is a risk, not a guarantee*.
+
+- **Overall**, I do agree with the LLM's critiques. They are detailed, sound and well illustrated. But I think the LLM overlooks or ignores the wordings I used to nuance my statements, such "if...", "...can be...". Furthermore, the LLM could have added other disadvantages not included in my list such as poor performance on complex patterns.
+
+*Hint:* If the LLM's critique is generic or just agrees with you, push back with a follow-up prompt asking for specific weaknesses, missing points, or factual errors. Include that follow-up in your submission.
+
+## 3. Explore the dataset `ISLR2::Boston` (12 points) {.unnumbered}
+
+This `Boston` dataset is often used as an example for regression problems. It contains the following variables:
+
+- `crim`: per capita crime rate by town.
+- `zn`: proportion of residential land zoned for lots over 25,000 sq.ft.
+- `indus`: proportion of non-retail business acres per town.
+- `chas`: Charles River dummy variable (= 1 if tract bounds river; 0 otherwise).
+- `nox`: nitrogen oxides concentration (parts per 10 million).
+- `rm`: average number of rooms per dwelling.
+- `age`: proportion of owner-occupied units built prior to 1940.
+- `dis`: weighted mean of distances to five Boston employment centres.
+- `rad`: index of accessibility to radial highways.
+- `tax`: full-value property-tax rate per \$10,000.
+- `ptratio`: pupil-teacher ratio by town.
+- `lstat`: lower status of the population (percent).
+- `medv`: median value of owner-occupied homes in \$1000s.
+
+```{r }
+#>message=FALSE
+library(tidyverse)
+library(patchwork)
+library(ISLR2)
+
+data <- Boston
+glimpse(data)
+```
+
+(A) Create histograms and/or density plots of each feature using `ggplot2`:
+
+**(3.1)** Combine all per-feature plots into a single figure using `patchwork` rather than producing one figure per feature. (2 points - coding)
+
+```{r}
+
+## Per capita crime rate by town.
+pl1.d <- ggplot(data, aes(x = crim))+
+  geom_density(fill= "steelblue", alpha = 0.5)+
+  labs(title = "Per Capita Crime Rate by Town", x = "Crim")+
+  theme(plot.title = element_text(size = 3))+
+  theme_minimal()
+pl1.d
+
+pl1.h <- ggplot(data, aes(x = crim))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Distribution of Per Capita Crime Rate",
+       x = "Crime", y = "Count")+
+  theme_minimal()
+pl1.h
+
+
+## Proportion of residential land zoned for lots over 25,000 sq.ft.
+pl2.d <- ggplot(data, aes(x = zn))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Proportion of Residential Land zoned", x = "zn")+
+  theme_minimal()
+pl2.d
+
+pl2.h <- ggplot(data, aes(x = zn))+
+  geom_histogram(bins = 10, fill = "steelblue", color = "black")+
+  labs(title = "Proportion of Residential Land Zoned")+
+  theme_minimal()
+pl2.h
+
+
+## Proportion of non-retail business acres per town.
+pl3.d <- ggplot(data, aes(x = indus))+
+  geom_density(fill = "steelblue", alpha = 0.1)+
+  labs(title = "Proportion of Non-retail business acres per town", x = "Indus")+
+  theme_minimal()
+pl3.d
+
+pl3.h <- ggplot(data, aes(x = indus))+
+  geom_histogram(bins = 10, fill = "steelblue", color = "black")+
+  labs(title = "Proportion of Non-retail business acres per town")+
+  theme_minimal()
+pl3.h
+
+
+## Charles River dummy variable (= 1 if tract bounds river; 0 otherwise).
+data <- data |>
+  mutate(chas = recode_factor(chas, 
+                              `0` = "No", 
+                              `1` = "Yes"))
+  
+pl4 <- ggplot(data, aes(x = chas))+
+  geom_bar(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Whether Tract Bounds River", x = "Chas")+
+  theme_minimal()
+pl4
+
+
+## Nitrogen oxides concentration (parts per 10 million)
+pl5.d <- ggplot(data, aes(x = nox))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Nitrogen Oxides Concentrtion", x = "Nox")+
+  theme_minimal()
+pl5.d
+
+pl5.h <- ggplot(data, aes(x = nox))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Nitrogen Oxides Concentrtion")+
+  theme_minimal()
+pl5.h
+
+
+## Average number of rooms per dwelling
+pl6.d <- ggplot(data, aes(x = rm))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Average number of rooms per dwelling", x = "Nox")+
+  theme_minimal()
+pl6.d
+
+pl6.h <- ggplot(data, aes(x = rm))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Average number of rooms per dwelling", x = "Rm", y = "Count")+
+  theme_minimal()
+pl6.h
+
+
+## Proportion of owner-occupied units built prior to 1940.
+pl7.d <- ggplot(data, aes(x = age))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Owner-occupied Units Built Prior 1940", x = "Age")+
+  theme_minimal()
+pl7.d
+
+pl7.h <- ggplot(data, aes(x = age))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Owner-occupied Units Built Prior 1940", x = "Age")+
+  theme_minimal()
+pl7.h
+
+
+## Weighted mean of distances to five Boston employment centres.
+pl8.d <- ggplot(data, aes(x = dis))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Distance to Five Boston Employment Centers", x = "Dis")+
+  theme_minimal()
+pl8.d
+
+pl8.h <- ggplot(data, aes(x = dis))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Distance to Five Boston Employment Centers", x = "Dis")+
+  theme_minimal()
+pl8.h
+
+
+## Index of accessibility to radial highways.
+pl9 <- ggplot(data, aes(x = factor(rad)))+
+  geom_bar(fill = "steelblue")+
+  labs(title = "Accessibility to Radial Highwys", x = "Rad")+
+  theme_minimal()
+pl9
+
+
+## full-value property-tax rate per $10,000.
+pl10.h <- ggplot(data, aes(x = tax))+
+  geom_histogram(bins = 15, fill = "steelblue", color = "black")+
+  labs(title = "Full-value Property-tax Rate Per $10,000.", x = "Tax")+
+  theme_minimal()
+pl10.h
+
+
+## Pupil-teacher ratio by town.
+pl11.d <- ggplot(data, aes(x = ptratio))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Pupil-teacher Ratio By Town", x = "Ptratio")+
+  theme_minimal()
+pl11.d
+
+pl11.h <- ggplot(data, aes(x = ptratio))+
+  geom_histogram(bins = 15, fill = "steelblue", color = "black")+
+  labs(title = "Pupil-teacher Ratio By Town", x = "Ptratio")+
+  theme_minimal()
+pl11.h
+
+
+## Lower status of the population (percent).
+pl12.d <- ggplot(data, aes(x = lstat))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Lower Status of the Population", x = "Lstat")+
+  theme_minimal()
+pl12.d
+
+pl12.h <- ggplot(data, aes(x = lstat))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Lower Status of the Population", x = "Lstat")+
+  theme_minimal()
+pl12.h
+
+
+## Median value of owner-occupied homes in $1000s.
+pl13.d <- ggplot(data, aes(x = medv))+
+  geom_density(fill = "steelblue", alpha = 0.5)+
+  labs(title = "Median value of owner-occupied homes in $1000s", x = "Medv")+
+  theme_minimal()
+pl13.d
+
+pl13.h <- ggplot(data, aes(x = medv))+
+  geom_histogram(bins = 20, fill = "steelblue", color = "black")+
+  labs(title = "Median value of owner-occupied homes in $1000s", x = "Medv")+
+  theme_minimal()
+pl13.h
+
+
+
+
+```
+
+```{r fig.width=12, fig.height=10}
+
+all_plots <- list(
+  pl1.h, pl2.h, pl3.h,
+  pl4, pl5.h, pl6.h,
+  pl7.h, pl8.h, pl9,
+  pl10.h, pl11.h, pl12.h,
+  pl13.h
+)
+
+wrap_plots(all_plots, ncol = 3) +
+  plot_annotation(
+    title = "Exploratory Visualizations of Boston Predictors"
+  ) &
+  theme(
+    plot.title = element_text(size = 8, face = "bold"),
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 6),
+    plot.margin = margin(3, 3, 3, 3)
+  )
+```
+
+**(3.2)** Look for interesting patterns in the distributions. For example, are distributions highly skewed? Do you notice any outliers? Document your findings. (2 points - discussion)
+
+Overall, the Boston dataset exhibits substantial heterogeneity and several non-normal distributions. Many variables, such as `crim`, `zn`, `dis`, `tax`, and `lstat`, display strong right skewness with long upper tails, indicating that most towns cluster around lower values while a small number of observations exhibit extreme behavior. Several predictors also reveal possible clustering or multimodality, particularly `indus`, `nox`, and `tax`, suggesting the presence of distinct neighborhood or development profiles within the dataset. The binary variable `chas` is highly imbalanced, with relatively few tracts bordering the Charles River, while `rad` behaves more like a discrete ordinal index than a continuous variable. In contrast, `rm` appears relatively symmetric and approximately bell-shaped, making it one of the few variables close to a normal distribution.
+
+**(3.3)** Are there any variables that should be transformed? (2 points - discussion)
+
+Yes. The following variables could most likely benefit from a log transformation: `crim`, `zn`, `dis`, `tax`, and `lstat.`
+
+(B) With the processed dataset, create three or more plots using `ggplot2` to explore the relationship between the variables. Document your findings:
+
+**(3.4)** Create three or more scatterplots between selected predictors and `medv`. (2 points - coding)
+
+```{r}
+
+##log lstat vs medv
+ggplot(Boston, aes(x = log(lstat), y = medv)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal()
+```
+
+```{r}
+
+## rm vs medv
+ggplot(Boston, aes(x = rm, y = medv)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal()
+```
+
+```{r}
+
+## log crim vs medv
+ggplot(Boston, aes(x = log(crim), y = medv)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal()
+```
+
+```{r}
+
+## log dis vs medv
+ggplot(Boston, aes(x = log(dis), y = medv)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal()
+```
+
+**(3.5)** Do you see strong correlation between some of the variables? What type of correlation do you see? (2 points - discussion)
+
+Yes. We see a strong negative and positive correlation between `medv`and, respectively, `lstat`and `rm` . As the values of `lstat` and `rm` increase, the median value of owner-occupied homes tend to, respectively, decrease, and increase.
+
+**(3.6)** What would be the consequence of the correlations you identified in **(3.5)** if you want to train a regression model? (1 point - discussion)
+
+When training a regression model, we would want to include those predictors with strong correlations with the response. Strong correlation could indicate strong predictive abilities.
+
+**(3.7)** Pick one of the graphs you produced in **(3.1)** or **(3.4)** and submit it to a multimodal LLM (e.g., ChatGPT, Claude, Gemini) with a request to interpret what the graph shows. Paste the LLM's response. Then evaluate it: do you agree with the interpretation? Did the LLM point someting out that surprised you? What (if anything) does the LLM get wrong (e.g., misread values, hallucinated labels, missing context about the variables)? Add anything important the LLM missed. (1 point - discussion)
+
+[**LLM Response:**]{.underline}
+
+This scatter plot shows a clear **negative relationship** between the variables **log(lstat)** (log of lower status population percentage) and **medv** (median home value).
+
+Here’s what it tells us:
+
+- **Downward trend**: As the value of `log(lstat)` increases, `medv` decreases. This means neighborhoods with a higher proportion of lower-status individuals tend to have lower median home values.
+
+- **Linear fit**: The blue line represents a fitted regression model, showing the average trend. The slope is negative, confirming the inverse relationship.
+
+- **Data spread**: While the general trend is clear, there’s noticeable scatter around the line, indicating variability—other factors likely influence home prices beyond `lstat`.
+
+In short, this plot visually supports the idea that socioeconomic status is a strong predictor of housing value, with higher `lstat` (lower status) corresponding to lower `medv`.
+
+**Evaluation of LLM Response :**
+
+I agree with the interpretation the LLM provided. The response is well structured and covers all aspects of the plot I could think of. Nothing particularly surprises me from this answer, and I do not spot any error in the interpretation.
+
+*Hint:* Multimodal LLMs often misread specific values or invent labels. Cross-check the LLM's claims against the graph and the underlying data.

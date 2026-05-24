@@ -1,0 +1,13 @@
+Module 1 Notes: 
+
+Todo #1 : Help Page for readr::read_cvs
+
+* 
+Argument 	Function
+
+- file 		points to the file containing the data
+- delim		single character separating fields in a record
+- comment	comments identifier (so they can be silently ignored) 
+- skip		identifies the number of lines to skip before reading the data.
+
+
