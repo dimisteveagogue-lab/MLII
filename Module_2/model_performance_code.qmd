@@ -1,0 +1,24 @@
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+knitr::include_graphics("images/model_workflow_validate.png")
+library(tidymodels)
+# prepare
+data <- datasets::mtcars |>
+  as_tibble(rownames = "car") |>
+  mutate(
+    vs = factor(vs, labels = c("V-shaped", "straight")),
+    am = factor(am, labels = c("automatic", "manual")),
+  )
+
+# fit model
+formula <- mpg ~ cyl + disp + hp + drat + wt + qsec + vs + am +
+  gear + carb
+model <- linear_reg() |>
+  set_engine("lm") |>
+  fit(formula, data = data)
+metrics(augment(model, data), truth = mpg, estimate = .pred)
+robust_metric <- metric_set(mae, huber_loss)
+robust_metric(augment(model, data), truth = mpg, estimate = .pred)
+```
