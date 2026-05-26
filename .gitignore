@@ -1,0 +1,187 @@
+# =========================================================
+# ENVIRONMENT VARIABLES / SECRETS / CREDENTIALS
+# =========================================================
+
+.env
+*.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+
+id_rsa*
+id_ed25519*
+
+secrets/
+credentials/
+config/secrets.*
+*.token
+*.tokens
+*.secret
+
+# AWS / Azure / GCP
+.aws/
+.azure/
+.gcp/
+
+# =========================================================
+# PYTHON
+# =========================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Python testing/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================================================
+# R / RSTUDIO / POSITRON
+# =========================================================
+
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Positron / IDE sessions
+.history/
+.quarto/
+
+# Renv
+renv/library/
+renv/python/
+renv/staging/
+
+# =========================================================
+# QUARTO / LATEX / RMARKDOWN
+# =========================================================
+
+# LaTeX intermediate files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.nav
+*.snm
+
+# Knitting/render temp folders
+*_files/
+*_cache/
+
+# TinyTeX / TeX temp
+texput.log
+
+# =========================================================
+# SPARK / BIG DATA
+# =========================================================
+
+metastore_db/
+spark-warehouse/
+derby.log
+
+# Hadoop / Spark temp
+*.crc
+
+# =========================================================
+# DATA FILES (OPTIONAL — customize carefully)
+# =========================================================
+
+# Uncomment if datasets are large/private
+# *.csv
+# *.parquet
+# *.feather
+# *.rds
+# *.rda
+# *.sqlite
+# *.db
+
+# =========================================================
+# IDE / EDITOR / OS FILES
+# =========================================================
+
+.vscode/
+.idea/
+
+# Positron local settings
+*.code-workspace
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =========================================================
+# LOGS / TEMP FILES
+# =========================================================
+
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# =========================================================
+# CODEX / AI TOOLING
+# =========================================================
+
+.codex/
+.cursor/
+.roo/
+
+# =========================================================
+# GENERATED OUTPUTS
+# =========================================================
+
+# PDFs (optional)
+# Uncomment ONLY if PDFs are generated artifacts
+*.pdf
+
+# HTML outputs
+*.html
+
+# PowerPoint temp
+~$*.pptx
+
+# Word temp
+~$*.docx
+
+# =========================================================
+# MISCS
+# =========================================================
+
+positron_test_setup_files/

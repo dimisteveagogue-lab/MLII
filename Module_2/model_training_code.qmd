@@ -1,0 +1,51 @@
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+knitr::include_graphics("images/model_workflow_parsnip.png")
+library(tidyverse)
+library(tidymodels)
+data <- datasets::mtcars |>
+  as_tibble()
+head(data)
+data <- datasets::mtcars |>
+  as_tibble(rownames = "car") |>
+  mutate(
+    vs = factor(vs, labels = c("V-shaped", "straight")),
+    am = factor(am, labels = c("automatic", "manual")),
+  )
+data
+new_cars <- tibble(
+  car = c("test1", "test2"), cyl = c(4, 6), disp = c(100, 200),
+  hp = c(100, 200), drat = c(3, 4), wt = c(2, 3), qsec = c(10, 20),
+  vs = c(1, 0), am = c(1, 0), gear = c(3, 4), carb = c(1, 2)
+) |>
+  mutate(
+    vs = factor(vs, labels = c("V-shaped", "straight")),
+    am = factor(am, labels = c("automatic", "manual")),
+  )
+new_cars
+formula <- mpg ~ cyl + disp + hp + drat + wt + qsec + vs + am +
+  gear + carb
+model <- linear_reg() |>
+  set_engine("lm") |>
+  fit(formula, data = data)
+model
+model$fit
+predict(model, new_data = new_cars)
+augment(model, new_data = new_cars)
+pred_ci <- predict(model, new_data = data, type = "conf_int")
+df <- tibble(
+  actual = data$mpg,
+  predicted = predict(model, new_data = data)$.pred,
+  lower = pred_ci$.pred_lower,
+  upper = pred_ci$.pred_upper)
+
+ggplot(df,
+  aes(x = actual, y = predicted, ymin = lower, ymax = upper)) +
+  geom_abline(color = "darkgrey") +
+  geom_errorbar(color = "darkgreen") +
+  geom_point() +
+  labs(x = "Actual mpg", y = "Predicted mpg") +
+  coord_fixed(ratio = 1)
+```
