@@ -1,0 +1,16 @@
+
+```{r}
+library(rsample)
+set.seed(1353)
+car_split <- initial_split(mtcars)
+car_split
+train_data <- training(car_split)
+test_data <- testing(car_split)
+set.seed(9872)
+
+car_split <- initial_validation_split(mtcars)
+car_split
+train_data <- training(car_split)
+validation_data <- validation(car_split)
+holdout_data <- testing(car_split)
+```
