@@ -1,0 +1,12 @@
+
+
+
+```{r knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE, fig.align = "center")}
+library(tidyverse)
+library(tidymodels)
+library(DT)
+library(kableExtra)
+
+data <- readr::read_csv("Module_2/Advertising.csv")
+getwd()
+```
