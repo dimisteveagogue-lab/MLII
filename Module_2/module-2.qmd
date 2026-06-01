@@ -1,0 +1,583 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE, fig.align = "center")
+```
+
+In this example, we will build a variety of regression models to predict `mpg` based on car features found in the `ISLR2::Auto` dataset. We will split the dataset into training and holdout set to estimate the model performance. 
+
+This live session we will not use the full power of _tidymodels_. In particular, we are not defining models as workflows. In the appendix, we are going to see how this will be done.
+
+::: {.callout-tip title="Online resources"}
+Read more about the topics covered in this live session in the course material:
+
+- [Data visualization](https://gedeck.github.io/machine-learning-with-tidymodels/src/003-data-visualization.html)
+- [Training regression models](https://gedeck.github.io/machine-learning-with-tidymodels/src/201-regression-models-1.html)
+- [Measuring performance of regression models](https://gedeck.github.io/machine-learning-with-tidymodels/src/202-regression-models-2.html)
+- [Splitting data](https://gedeck.github.io/machine-learning-with-tidymodels/src/401-model-validation-1.html#creating-an-initial-split-of-the-data-into-training-and-holdout-set)
+:::
+
+
+## Load packages
+```{r load-packages}
+#| message: FALSE
+#| warning: FALSE
+library(tidyverse)
+library(tidymodels)
+library(GGally)  # scatterplot matrix
+library(patchwork)  # for combining plots
+```
+
+## Predict `mpg` based on car features
+The objective is to build regression models to predict `mpg` based on car features found in the `ISLR2::Auto` dataset. We will explore the following models:
+
+- Linear regression
+- Linear regression with quadratic terms
+- Nearest neighbors regression
+
+### Load and preprocess data
+Load the `ISLR2::Auto` dataset and change a couple columns to factors.
+```{r load-data}
+auto <- ISLR2::Auto |>
+  as_tibble() |>
+  mutate(
+    cylinders = as.factor(cylinders),
+    origin = as.factor(origin),
+  ) |>
+  select(-name)  # remove name column
+```
+
+- Outcome:
+    - `mpg`: Miles per gallon
+- Predictors:
+    - `displacement`: Engine displacement (cu. inches)
+    - `horsepower`: Engine horsepower
+    - `weight`: Vehicle weight (lbs.)
+    - `acceleration`: Time to accelerate from 0 to 60 mph (sec.)
+    - `year`: Model year (modulo 100)
+- Other:
+    - `cylinders`: Number of cylinders between 4 and 8
+    - `origin`: Origin of car (1. American, 2. European, 3. Japanese)
+
+
+### Exploratory data analysis
+A scatter plot matrix (or pairs plot) can give you a good first impression of the data. The `ggpairs` function was used to create @fig-eda.
+```{r fig-eda}
+#| fig.cap: Pairs plot of the Auto dataset
+#| fig.alt: Pairs plot of the Auto dataset
+#| fig.width: 10
+#| fig.height: 10
+#| fig.align: center
+#| out.width: 99%
+#| warning: FALSE
+#| message: FALSE
+ggpairs(auto, mapping = aes(alpha = 0.05))  # <1>
+```
+1. Setting `alpha` adds transparency to the points in the scatterplot. This may help to expose patterns in dense areas. In contrast to other `ggplot2` functionality, we must specify it as part of the mapping.
+
+The graph shows that there is strong to medium correlation between many of the variables. For modeling purposes, it can be more useful to look at the correlation between the predictors and the outcome variable for this study, `mpg`.  This becomes more obvious in @fig-eda-mpg which shows the correlation between the predictors and the outcome variable `mpg` in separate scatterplots.
+```{r fig-eda-mpg}
+#| fig.cap: Correlation between the variables and the outcome variable `mpg`
+#| fig.alt: Correlation between the variables and the outcome variable `mpg`
+#| fig.width: 7
+#| fig.height: 5
+#| fig.align: center
+#| out.width: 75%
+#| message: FALSE
+df_long <- auto |>
+  select(-cylinders, -origin) |>
+  pivot_longer(-c(mpg), names_to = "predictor")  # <1>
+ggplot(df_long, aes(x = value, y = mpg)) +
+  geom_point(alpha = 0.25) +  # <2>
+  geom_smooth() +  # <3>
+  facet_wrap(~ predictor, scales = "free_x")
+```
+1. `pivot_longer` is used to reshape the data from wide to long format. This allows to create separate scatterplots for each predictor using `facet_wrap`.
+2. The `alpha=0.25` argument adds transperency to the points in the scatterplot.
+3. The function `geom_smooth` adds a smoothing line to the graph. This function displays an informative message that we suppress using the chunk option `#| message: FALSE`. You should always read such messages before you suppress them. Sometimes they contain important information. 
+
+
+The relationship between the predictors and `mpg` is not linear. We will introduce quadratic terms later to the linear regression model to account for this.
+
+### Split data into training and testing sets
+We split the data into a training and a testing set. The training set is used to build the models and the testing set is used to evaluate the models. The split uses stratified sampling based on the outcome variable and assigns 75% to the training and 25% to the test set. 
+```{r split-data}
+set.seed(1)  # <1>
+auto_split <- initial_split(auto, prop = 0.75, strata = mpg)  # <2>
+train <- training(auto_split)
+test <- testing(auto_split)
+```
+1. Setting a seed ensures that the results are reproducible. The same seed should be used if you want to reproduce the same split of the data.
+2. `initial_split` is a function from the `rsample` package that creates a split of the data. The result of the function only contains the information about which rows are in the training or the test set. Use the `training` and `testing` functions to extract the actual training and test set.
+
+For the nearest neighbor model, the predictors need to be scaled. 
+Standarize and split the data for nearest neighbor models
+```{r split-standarize-data}
+scaled_auto <- auto |>
+  mutate(across(where(is.numeric) & !mpg, scale))  # <1>
+
+set.seed(1)  # <2>
+scaled_auto_split <- initial_split(scaled_auto, prop = 0.75, strata = mpg)
+scaled_train <- training(scaled_auto_split)
+scaled_test <- testing(scaled_auto_split)
+```
+1. `where(is.numeric) & !mpg` selects all numeric columns except `mpg`.
+2. We set the seed again to ensure that the same split is used for the scaled data as for the original data.
+
+The approach we used here is not the best way to do scaling or other preprocessing tasks. We will learn better ways using workflows. The rescaling should be learned from the training set and applied to the test set. With workflows, this is done automatically.
+
+
+### Build regression models
+We first train three different models. Two linear regression models, one with quadratic terms, and two nearest neighbor models with $k=5$ and $k=17$.
+
+#### Linear regression
+```{r linear-regression}
+formula <- mpg ~ displacement + horsepower + weight + acceleration + year  # <1>
+
+lm_spec <- linear_reg(engine = "lm", mode = "regression")  # <2>
+lm_model <- lm_spec |>
+  fit(formula, data = train)  # <3>
+```
+1. The formula specifies the model we want to train. 
+2. The `parsnip` function `linear_reg` defines that we want to train a linear regression model. It is a wrapper around implementations (`engine`). Here, we specify that we want to use the `lm` function from base R. The `mode` argument specifies that we want to train a regression model. In this case, it is not strictly necessary to specify the mode as it is implied by the model type. The `lm` engine is also default; we could have just written `lm_spec <- linear_reg()`.
+3. This trains the model using the training data and the formula we defined. 
+
+With base R, we could have trained the same model using the `lm` function as follows:
+```{r linear-regression-base-r}
+lm_model_base_r <- lm(formula, data = train)
+```
+While it may feel like we are doing more work with _tidymodels_, we will see that the _tidymodels_ approach is more flexible and allows us to easily switch between different model types and engines. It also allows us to easily add preprocessing steps to the modeling process using workflows and validate the models using resampling techniques. It also hides the idiosyncracies of different model implementations and provides a consistent interface for training and evaluating models.
+
+
+#### Linear regression with quadratic terms
+Next, we add quadratic terms by changing the formula. 
+```{r linear-regression-quadratic}
+formula_quadratic <- (mpg ~ poly(displacement, 2) + poly(horsepower, 2) +
+    poly(weight, 2) + poly(acceleration, 2) + poly(year, 2)) # <1>
+
+quad_model <- lm_spec |>  # <2>
+  fit(formula_quadratic, data = train)
+```
+1. For now, we define polynomial terms in the function. This will no longer work when we switch to defining preprocessing steps using workflows. You can see the _better_ way to do it in the appendix (see @sec-workflow).
+2. We reuse the model specification for the linear regression model
+
+
+#### Nearest neighbors regression
+The number of neighbors is set to $k=5$ and $k=17$
+```{r nearest-neighbors}
+nn_spec <- nearest_neighbor(engine = "kknn", mode = "regression", neighbors = 5)  # <1>
+nn_model_5 <- nn_spec |>
+  fit(formula, data = scaled_train)  # <2>
+
+nn_spec <- nearest_neighbor(engine = "kknn", mode = "regression", neighbors = 17)
+nn_model_17 <- nn_spec |>
+  fit(formula, data = scaled_train)
+```
+1. The `nearest_neighbor` function defines that we want to train a nearest neighbor regression model. We use the `kknn` engine to build the model. The `neighbors` argument specifies the number of neighbors to use in the model. In principle, we don't need to set `neighbors=5` as it is the default. However, to be more explicit, we set it here.
+2. This is not different from the linear regression models. The only difference is that we now use a different model specification and the scaled training data.
+
+The model engine is `kknn` which is a variation of the $k$-nearest neighbor model described in the _Introduction to statistical learning_ book. In the standard $k$-NN approach, all $k$ neighbors contribute equally to the prediction. Here, we use a weighted $k$-NN model where closer neighbors have a stronger influence than more distance neighbors.
+
+### Model evaluation
+#### Significance
+##### Linear model
+```{r}
+lm_model |>
+  extract_fit_engine() |>  # <1>
+  summary()
+```
+1. The `extract_fit_engine` function returns the underlying model. This allows us to use functionality that is specific to the fit engine. Here, it gives us access to the linear model object created by the `lm` function from base R. We can then use the `summary` function to get a summary of the model, including the significance of the predictors.
+
+Weight and year have significant contribution to the model. We could consider training a smaller model by removing the other predictors.
+
+
+:::{.callout-tip title='LLM Prompt' icon='false'}
+A LLM can also be used to support the analysis of the model output. We can use the following prompt:
+```
+Consider this output of a regression model:
+<paste the coefficients information here>
+Analyze it and make suggestions for next steps.
+```
+We can follow this up with a challenge question:
+```
+Challenge the analysis
+```
+The analysis heavily relied on knowledge about the data. For new datasets, providing a data dictionary can help the LLM to make a better analysis.
+:::
+
+
+##### Linear model with quadratic terms
+```{r}
+quad_model |>
+  extract_fit_engine() |>
+  summary()
+```
+Now most terms are significant. Only the quadratic terms for displacement and horsepower are insignificant. We could change the function to only include quadratic terms for weight, acceleration, and year.
+
+
+:::{.callout-tip title="LLM Prompt" icon="false"}
+We repeat the same process as before, but now with the new model. We can use the same prompt as before, but now we paste the output of the new model. We can also ask the LLM to compare the two models and make suggestions for next steps.
+```
+Compare this output with the previous model and make suggestions for next steps.
+<paste the coefficients information here>
+```
+Like before, we can follow this up with a challenge question.
+:::
+
+
+#### Residual plots
+Residual plots can give you a visual indication of the quality of the model. The residuals should be randomly distributed around zero. If there is a pattern, it indicates that the model is not capturing all the information in the data. See [Diagnostics plots](https://gedeck.github.io/machine-learning-with-tidymodels/src/601-linear-regression.html#diagnostics-plots) in the course material for more information.
+
+We first define a function to create residual plots. You could in principle use the diagnostic plots from the fit engine, but we want to create a more complex plot to compare the different models.
+```{r define-residual-plots-function}
+residual_plot <- function(model, data, xlabel, title) {  # <1>
+  data <- model |>
+    augment(data)  # <2>
+  g <- ggplot(data, aes(x = .pred, y = .resid)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth() +
+    labs(x = xlabel, y = "Residual", title = title)
+  return(g)  # <3>
+}
+```
+1. We define a function `residual_plot` that takes a model, a dataset, and labels for the x-axis and title of the plot. The function returns a ggplot object with the residual plot.
+2. The `augment` function uses the model to predict the outcome for the data and returns a dataset with the adds several columns to the dataset. For a regression model, it will add the predicted outcome in the `.pred` column and the residuals in the `.resid` column. _Tidymodels_ adds the prefix `.` to the column names to indicate estimated values.
+3. By default, a function in R returns the last object that is created. Using an explicit `return` statment, improves readability and maintainability.
+
+@fig-residual-plots shows the residual plots for the four models. 
+```{r fig-residual-plots}
+#| fig.cap: Residual plots for four models for predictions of the training set
+#| fig.alt: Residual plots for four models for predictions of the training set
+#| out.width: 75%
+#| fig.width: 8
+#| fig.height: 6
+#| warning: FALSE
+#| message: FALSE
+g1 <- residual_plot(lm_model, train,
+  "Predicted mpg", "Linear regression") +
+  coord_cartesian(ylim = c(-10, 15))  # <1>
+g2 <- residual_plot(quad_model, train,
+  "Predicted mpg", "Add quadratic terms") +
+  coord_cartesian(ylim = c(-10, 15))
+g3 <- residual_plot(nn_model_5, scaled_train,
+  "Predicted mpg", "Nearest neighbors (5)") +
+  coord_cartesian(ylim = c(-10, 15))
+g4 <- residual_plot(nn_model_17, scaled_train,
+  "Predicted mpg", "Nearest neighbors (17)") +
+  coord_cartesian(ylim = c(-10, 15))
+(g1 + g2) / (g3 + g4)  # <2>
+```
+1. We defined the axis limits for the `y` axis to make the plots more comparable.
+2. The `patchwork` package allows us to easily combine the four plots into a single graph. The syntax `(g1 + g2) / (g3 + g4)` means that we want to combine `g1` and `g2` as well as `g3` and `g4` horizontally and then place the two rows on top of each other.
+
+The linear regression model with linear terms shows a pattern in the residuals. A pattern like this indicates that we may benefit from adding quadratic or higher order terms. The linear regression model with quadratic terms is clearly improved. There is still some heteroscedasticity in the residuals, but it is much better than the linear model. 
+The nearest neighbor models also reflect the heteroscedasticity, but have much smaller residuals. Note however, that we look at predictions on the training set. The residuals for predicting the test set are shown in @fig-residual-plots-test. 
+```{r fig-residual-plots-test}
+#| fig.cap: Residual plots for four models for predictions of the test set
+#| fig.alt: Residual plots for four models for predictions of the test set
+#| out.width: 75%
+#| fig.width: 8
+#| fig.height: 6
+#| warning: FALSE
+#| message: FALSE
+g1 <- residual_plot(lm_model, test,
+  "Predicted mpg", "Linear regression") +
+  coord_cartesian(ylim = c(-10, 15))
+g2 <- residual_plot(quad_model, test,
+  "Predicted mpg", "Add quadratic terms") +
+  coord_cartesian(ylim = c(-10, 15))
+g3 <- residual_plot(nn_model_5, scaled_test,
+  "Predicted mpg", "Nearest neighbors (5)") +
+  coord_cartesian(ylim = c(-10, 15))
+g4 <- residual_plot(nn_model_17, scaled_test,
+  "Predicted mpg", "Nearest neighbors (17)") +
+  coord_cartesian(ylim = c(-10, 15))
+(g1 + g2) / (g3 + g4)
+```
+The perceived improvement of the nearest neighbor models is not as clear when looking at the test set.
+
+:::{.callout-tip title="LLM Prompt" icon="false"}
+Multi-modal LLMs can be used to analyze and compare plots. We do this here for the the two residual plots in @fig-residual-plots and @fig-residual-plots-test:
+```
+Compare the two figures. One is for the training set
+and one for the test set for four different models:
+<paste the two figures here>
+```
+The LLM analyzes the patterns in the residuals and makes suggestions for next steps.
+:::
+
+#### Performance metrics (RMSE, MAE, $r^2$)
+The visual inspection of the residual plots gives a good first impression of the model performance. However, it is difficult to compare the models based on the residual plots alone.
+We can quantify the performance of the models using performance metrics. We will use the root mean squared error (RMSE), the mean absolute error (MAE), and the coefficient of determination ($r^2$). The RMSE and MAE are in the same units as the outcome variable `mpg`. The $r^2$ is a unitless measure between 0 and 1. The closer to 1, the better the model.
+
+Define utility functions to calculate performance metrics for training and test set and combine the results in a data frame.
+```{r model-evaluation}
+calculate_metrics <- function(model, train, test, model_name) {
+  df <- bind_rows(
+    bind_cols(
+      model = model_name,
+      dataset = "train",
+      metrics(model |> augment(train), truth = mpg, estimate = .pred),  # <1>
+    ),
+    bind_cols(
+      model = model_name,
+      dataset = "test",
+      metrics(model |> augment(test), truth = mpg, estimate = .pred), # <2>
+    ),
+  )
+  return(df)
+}
+```
+1. The function `augment(model, data)` uses the `model` to predict the outcome for `data`. Depeding on the model type, this adds several columns to the dataset. For a regression model, we get `.pred`, the predicted outcome, and `.resid`, the residual (= actual - predicted)
+2. `metrics` is a `yardstick` function that calculates a set of standard metrics dependent on the model type. Here, RMSE, $r^2$, and MAE.
+
+
+For a tabular presentation of the metrics, we define a helper function.
+```{r}
+metrics_table <- function(model_metrics) {
+  return(model_metrics |>
+      pivot_wider(names_from = .metric, values_from = .estimate) |>
+      select(-.estimator) |>
+      knitr::kable(digits = 3) |>
+      kableExtra::kable_styling(full_width = FALSE)
+  )
+}
+```
+
+Calculate metrics for each model (training and testing)
+```{r calculate-metrics-table}
+model_metrics <- bind_rows(
+  calculate_metrics(lm_model, train, test, "Linear regression"),
+  calculate_metrics(quad_model, train, test, "Quadratic regression"),
+  calculate_metrics(nn_model_5, scaled_train, scaled_test, "Nearest neighbor (5)"),
+  calculate_metrics(nn_model_17, scaled_train, scaled_test, "Nearest neighbor (17)"),
+)
+```
+```{r tbl-metrics-table}
+#| tbl-cap: Metrics for the four regression models
+metrics_table(model_metrics)
+```
+@tbl-metrics-table shows the metrics for the four models. Let's focus on RMSE. The performance metrics clearly show that adding quadratic terms to a linear model, gives a better model. The nearest neighbor model with $k=5$ has the lowest RMSE for the training set. However, when assessing and comparing models we should always look at the test set. The test set metrics show that the model with quadratic terms performs best. 
+
+Instead of looking at a table, a visualization of the metrics in a graph can give a better overview.
+```{r fig-metrics-graph}
+#| fig.cap: Performance metrics of the four regression models determined using the training and the test sets
+#| fig.alt: Performance metrics of the four regression models determined using the training and the test sets
+#| fig.width: 12
+#| fig.height: 2
+#| out.width: 100%
+metrics_wide <- model_metrics |>
+  pivot_wider(names_from = .metric, values_from = .estimate)  # <1>
+
+g1 <- ggplot(metrics_wide, aes(x = rmse, y = model,
+    color = dataset, shape = dataset)) +
+  geom_point() +
+  labs(title = "RMSE")
+g2 <- ggplot(metrics_wide, aes(x = mae, y = model,
+    color = dataset, shape = dataset)) +
+  geom_point() +
+  labs(title = "MAE")
+g3 <- ggplot(metrics_wide, aes(x = rsq, y = model,
+    color = dataset, shape = dataset)) +
+  geom_point() +
+  labs(title = "R squared")
+g1 + g2 + g3
+```
+1. The `pivot_wider` command converts the data frame into wide format. The `.metric` values are added as individual columns with the corresponding `.estimate` values.
+
+@fig-metrics-graph shows the RMSE, MAE, and $r^2$ values for the four models. We can easily see that for the two linear regression models, the performance metrics are very similar between training and test set. This tells us that the linear regression model is not overfitting the training set. The nearest neighbor models on the other hand, show a large separation between training and test set which points to overfitting of the training set.
+
+
+@fig-metrics-graph combines three separate graphs. As a consequence, $y$ axis labels and the legend are repeated every time. This is avoided in @fig-metrics-graph-facets. The metrics are shown in separate facets. This makes it easier to compare the models for each metric.
+
+```{r fig-metrics-graph-facets}
+#| fig.cap: Performance metrics of the four regression models determined
+#|          using the training and the test sets; visualization using facet_wrap
+#| fig.alt: Performance metrics of the four regression models determined
+#|          using the training and the test sets; visualization using facet_wrap
+#| fig.width: 6
+#| fig.height: 2
+#| out.width: 75%
+ggplot(model_metrics, aes(x = .estimate, y = model,
+    color = dataset, shape = dataset)) +
+  geom_point() +
+  facet_wrap(~ .metric, scales = "free_x") +  # <1>
+  labs(x = "Metric value", y = "")
+```
+1. This splits the graph into individual facets. We use `scales = "free_x"` to use different $x$ axis ranges for each. 
+
+Based on these results, we would choose the linear regression model with quadratic terms as the best model. It's test set performance is best.
+
+### Explore the nearest neighbor model more thoroughly. 
+In the previous section, we only looked at nearest neighbor models with $k=5$ and $k=17$. We don't know if this is sufficient and we should therefore explore additional models by iterating over more values of $k$ and build additional models.
+```{r nearest-neighbors-k}
+nn_models <- list()  # <1>
+for (k in 3:30) {  # <2>
+  model <- nearest_neighbor(mode = "regression", neighbors = k, engine = "kknn")
+  nn_models[[k]] <- model |>  # <3>
+    fit(formula, data = scaled_train)
+}
+```
+1. The individual models are stored in the list `nn_models`, indexed using the number of neighbors $k$.
+2. We iterate over values of `k` from 3 to 30. The value of `k` is used in the model specification to set the number of neighbors.
+3. We add models the fitted models to the list using `nn_models[[k]]`. This means, for example, that `nn_models[[9]]` is the model with $k=9$.
+
+Calculate training and testing metrics for each model. 
+```{r calculate-metrics-k}
+model_metrics <- bind_rows(
+  calculate_metrics(lm_model, train, test, "Linear regression"),
+  calculate_metrics(quad_model, train, test, "Quadratic regression"),
+)
+for (k in 3:30) {
+  model_metrics <- bind_rows(
+    model_metrics,
+    calculate_metrics(nn_models[[k]], scaled_train, scaled_test,
+      sprintf("Nearest neighbor (%2d)", k)),
+  )
+}
+```
+@fig-metrics-graph-k shows the results. 
+```{r fig-metrics-graph-k}
+#| fig.cap: RMSE of the regression models determined using the training and the test sets
+#| fig.alt: RMSE of the regression models determined using the training and the test sets
+#| fig.width: 8
+#| fig.height: 6
+#| out.width: 100%
+metrics_wide <- model_metrics |>
+  pivot_wider(names_from = .metric, values_from = .estimate)
+ggplot(metrics_wide, aes(x = model, y = rmse,
+    color = dataset, shape = dataset)) +
+  geom_point() +
+  coord_flip()
+```
+The training set RMSE increases with increasing $k$. This is expected as the model becomes more flexible with smaller $k$ values and can fit the training set better. For the test set RMSE, we see a minimum at around $k=16$. The difference between training and test set RMSE becomes smaller for larger $k$ values. Independent of the $k$ value, the linear regression model with quadratic terms performs best.
+
+The dependence of RMSE on $k$ is more obvious in @fig-rmse-knn. 
+```{r fig-rmse-knn}
+#| fig.cap: RMSE of test set performance of k-nearest neighbor regression models as a function of k
+#| fig.alt: RMSE of test set performance of k-nearest neighbor regression models as a function of k
+#| fig.width: 6
+#| fig.height: 5
+#| out.width: 75%
+rmse_metrics <- tibble()
+for (k in 3:30) {
+  rmse_metrics <- bind_rows(
+    rmse_metrics,
+    tibble(
+      k = k,
+      calculate_metrics(nn_models[[k]], scaled_train, scaled_test, "Nearest neighbor"),
+    ) |>
+      filter(dataset == "test") |>
+      filter(.metric == "rmse")
+  )
+}
+best_test <- rmse_metrics |>
+  filter(dataset == "test") |>
+  filter(.estimate == min(.estimate))
+ggplot(rmse_metrics, aes(x = k, y = .estimate,
+    color = dataset, shape = dataset)) +
+  geom_point() +
+  geom_line() +
+  geom_vline(xintercept = best_test |> pull(k), linetype = "dashed") +
+  geom_hline(yintercept = best_test |> pull(.estimate), linetype = "dashed") +
+  labs(x = "Number of neighbors k", y = "RMSE (test set)")
+```
+
+## Summary
+
+This session demonstrates how to build and evaluate several regression models using _tidymodels_. We began by performing exploratory data analysis to understand the relationships between predictors and the outcome. We then compared three different models: a simple linear regression, a linear model with quadratic terms, and a k-nearest neighbors (KNN) model.
+
+Model performance was assessed by splitting the data into training and test sets and evaluating metrics like RMSE, MAE, and R-squared. We found that the linear model with quadratic terms provides the best performance on the test set. The analysis also included a deeper look at the KNN model, exploring how the choice of `k` (the number of neighbors) impacts its predictive accuracy and demonstrated the risk of overfitting. Finally, an appendix introduces the use of `tidymodels` workflows as a more robust and streamlined approach to combining preprocessing and modeling steps.
+
+## Appendix: Using a workflow
+In _tidymodels_, it is better to use a workflow to define a model. A workflow combines data processing and model definition into a single object. This recognizes the fact that data processing is an integral part of the modeling process. While we learn about this in later modules, it is good to be aware of this from the start.
+
+### Defining the workflows {#sec-workflow}
+The linear regression model is defined as follows.
+```{r}
+formula <- mpg ~ displacement + horsepower + weight + acceleration + year
+linear_recipe <- recipe(formula, data = train)  # <1>
+lm_spec <- linear_reg(engine = "lm", mode = "regression")
+
+linear_wf <- workflow() |>  # <2>
+  add_model(lm_spec) |>
+  add_recipe(linear_recipe)
+```
+1. The `recipe` defines the preprocessing steps. The role of `formula` is to inform the model which columns in the dataset are features and which our the outcome. There is no further preprocessing defined
+2. These lines define the `workflow`. It is a combination of the linear regression model and the recipe.
+
+To train a quadratic regression model, we only need to extend the recipe.
+```{r}
+quadratic_recipe <- recipe(formula, data = train) |>
+  step_poly(displacement, horsepower, weight, acceleration, year, degree = 2)  # <1>
+
+quadratic_wf <- workflow() |>
+  add_model(lm_spec) |>
+  add_recipe(quadratic_recipe)
+```
+1. The `step_poly` function, adds quadratic terms for the listed features.
+
+For the k-nearest neighbor model, we incorporate the scaling into the recipe.
+```{r}
+knn_recipe <- recipe(formula, data = train) |>
+  # step_poly(displacement, horsepower, weight, acceleration, year, degree = 2) |>
+  step_normalize(all_numeric_predictors())  # <1>
+nn_spec <- nearest_neighbor(engine = "kknn", mode = "regression", neighbors = 17)
+
+knn_wf <- workflow() |>
+  add_model(nn_spec) |>
+  add_recipe(knn_recipe)
+```
+1. The step defines that all numeric predictors will be normalized. The outcome `mpg` will not be changed. The normalization is just an additional step in the recipe. Defining the recipe will not determine the normalization of each predictor at this point. This will happen when the model is fitted. 
+
+### Training the models
+A workflow behaves in many respects just like a model specification. To train the model, we use the `fit` function to train the model.
+```{r}
+linear_model <- linear_wf |> fit(data = train)
+quadratic_model <- quadratic_wf |> fit(data = train)
+knn_model <- knn_wf |> fit(data = train)  # <1>
+```
+1. Note that we use the unscaled training data here. The normalization is part of the model and learned at this point.
+
+To access information about the linear regression model itself, we use `extract_fit_engine`.
+```{r}
+quadratic_model |>
+  extract_fit_engine() |>
+  summary()
+```
+We can see that the model is identical to the quadratic model we trained before. 
+
+The workflow object can also be used with the `predict` function, so we can use our `calculate_metrics` function to calculate performance metrics.
+```{r tbl-metrics-table-qda}
+#| tbl-cap: Metrics for the QDA model trained using a workflow
+model_metrics <- bind_rows(
+  calculate_metrics(quad_model, train, test, "Quadratic regression"),
+  calculate_metrics(quadratic_model, train, test, "Quadratic regression (workflow)"),
+)
+metrics_table(model_metrics)
+```
+The performance metrics are also identical.
+
+Finally, we compare all three models. 
+```{r tbl-metrics-table-wf}
+#| tbl-cap: Metrics for the four regression models trained using workflows
+model_metrics <- bind_rows(
+  calculate_metrics(linear_model, train, test, "Linear regression (workflow)"),
+  calculate_metrics(quadratic_model, train, test, "Quadratic regression (workflow)"),
+  calculate_metrics(knn_model, train, test, "Nearest neighbor (17, workflow)")  # <1>
+)
+metrics_table(model_metrics)
+```
+
+Note how in the previous code block, the original training and test data are used for all three models.
+
+This short example demonstrate how workflows combine preprocessing and model specification leading to more consistent training, validation, and prediction. 
+
+
+## Code {-}
+The code of this chapter is summarized here.
+```{r show-code, ref.label=knitr::all_labels()}
+#| class.source: "codesummary"
+#| code-fold: true
+#| code-summary: "Show the code"
+#| echo: TRUE
+#| eval: FALSE
+```

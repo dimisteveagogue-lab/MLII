@@ -1,0 +1,422 @@
+```{r setup}
+#| include: FALSE
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+The data is from the NASA NeoWs (Near Earth Object Web Service). NeoWs is a RESTful web service for near earth Asteroid information. With NeoWs a user can: search for Asteroids based on their closest approach date to Earth, lookup a specific Asteroid with its NASA JPL small body id, as well as browse the overall data-set. 
+
+Source: https://www.kaggle.com/datasets/shrutimehta/nasa-asteroids-classification/
+
+The main objective is to predict if an asteroid is hazardous or not based on its features.
+
+
+Load all required packages
+```{r}
+#| message: FALSE
+#| warning: FALSE
+library(tidyverse)
+library(tidymodels)
+library(ggcorrplot)  # for correlation plot
+library(GGally)  # scatterplot matrix
+library(patchwork)  # for combining plots
+```
+
+## Load the data and inspect
+We load the data from `https://gedeck.github.io/DS-6030/datasets/nasa.csv`.
+```{r load_nasa_data}
+#| message: FALSE
+#| warning: FALSE
+filename <- "https://gedeck.github.io/DS-6030/datasets/nasa.csv"
+asteroids_raw <- read_csv(filename)  # <1>
+asteroids_raw |> glimpse()  # <2>
+```
+1. This uses the `read_csv` function from the `readr` package to load the data from the specified URL. Use it instead of the base R `read.csv` function.
+2. The `glimpse` function gives us a quick overview of the structure of the dataset. We can see that there are 40 columns and 4687 rows. For each column, we get information about the data type and a few values. 
+
+The dataset contains 4687 rows and 40 columns. We can see that many columns have similar names, e.g. `Est Dia in ...` or `Miss Dist....`. It looks like these describe the same property in different units.
+
+
+:::{.callout-tip title='LLM Prompt' icon='false'}
+We can use an LLM to plan our data cleaning steps and exploratory data analysis. We can start with this prompt and ask the LLM to create a data dictionary. 
+```
+I'm working with this dataset
+https://gedeck.github.io/DS-6030/datasets/nasa.csv
+
+Create a data dictionary in yaml format
+```
+A data dictionary is a structured description of the variables in a dataset. It typically includes the variable name, data type, and a brief description of what the variable represents. A data dictionary can help us understand the dataset and plan our data cleaning and exploratory data analysis steps. View this as a first draft that must be reviewed and refined based on your understanding of the dataset.
+
+We now have an understanding of the dataset and can ask the LLM to plan data cleaning and exploratory data analysis. We can use the following prompts:
+```
+Plan data cleaning steps for this dataset. 
+```
+
+Note: this is a public dataset and information about the dataset has likely been included in the training of the LLM. 
+:::
+
+
+
+## Remove columns that are non-informative
+What do we look for?
+
+- Columns that contain unique identifiers
+- Columns that contain only a single value
+- Correlated columns (identical columns)
+- Metadata or other columns that are not relevant for the analysis
+
+
+### Identifying duplicate columns using a heatmap
+Our initial look at the data suggested that there are several columns that describe the same property in different units. Using a heatmap visualization of the correlation matrix, confirms this observation.
+```{r fig-preliminary-data-exploration}
+#| fig.cap: Heatmap showing the correlation between the numeric columns of the asteroids dataset.
+#| fig.alt: Heatmap showing the correlation between the numeric columns of the asteroids dataset.
+#| fig.width: 8
+#| fig.height: 8
+#| fig.align: center
+#| out.width: 75%
+corr <- asteroids_raw |>
+  select(where(is.numeric)) |> # <1>
+  cor()
+ggcorrplot(corr, hc.order = TRUE) # <2>
+```
+1. We select only the numeric columns of the dataset using `select(where(is.numeric))` before calculating the correlation matrix.
+2. The `ggcorrplot` function is used to create a heatmap of the correlation matrix. The `hc.order = TRUE` argument orders the variables based on hierarchical clustering, which can help to identify groups of highly correlated variables.
+
+@fig-preliminary-data-exploration shows a few blocks where the correlation is one. These are four groups of data columns that describe the same property in different units. We will use this information to reduce the number of columns in the dataset. We also remove columns that contain unique identifiers, e.g. `Name` or `Neo Reference ID`, as well as a few more non-informative columns. 
+```{r fig-after-remove-duplicate-columns}
+#| fig.cap: Heatmap after removing duplicated columns.
+#| fig.alt: Heatmap after removing duplicated columns.
+#| fig.width: 8
+#| fig.height: 8
+#| fig.align: center
+#| out.width: 75%
+remove_columns <- c("Name", "Est Dia in M(min)",
+  "Semi Major Axis", "Jupiter Tisserand Invariant",
+  "Epoch Osculation", "Mean Motion", "Aphelion Dist")
+asteroids <- asteroids_raw |>
+  select(-all_of(remove_columns)) |> # <1>
+  select(-contains("Relative Velocity")) |> # <2>
+  select(-contains("Est Dia in KM")) |>
+  select(-contains("Est Dia in Feet")) |>
+  select(-contains("Est Dia in Miles")) |>
+  select(-contains("Miss Dist.(lunar)")) |>
+  select(-contains("Miss Dist.(kilometers)")) |>
+  select(-contains("Miss Dist.(miles)"))
+corr <- asteroids |>
+  select(where(is.numeric)) |>
+  cor()
+ggcorrplot(corr)
+```
+1. We use `select(-all_of(remove_columns))` to remove the columns based on a list of column names.
+2. The `select(-contains(...))` function is used to remove all columns that contain a specific string in their name.
+
+After removing these columns, we can see in @fig-after-remove-duplicate-columns that there are no more highly correlated columns in the dataset.
+
+### Remove columns that contain only a single value
+Another useful step in data cleaning is to identify columns that contain only a single value. These columns do not provide any information for our analysis and can be removed. We can use the `n_distinct` function to count the number of unique values in each column.
+
+There are two columns that contain only a single value.
+```{r}
+df <- asteroids |>
+  summarise(across(everything(), n_distinct)) # <1>
+
+tibble(names = names(df), count = t(df)[, 1]) |> # <2>
+  filter(count == 1) # <3>
+```
+1. Apply the `n_distinct` function to each column (`everything()`) of the dataset.
+2. The result of the `summarise` function is a single row. We transpose the result using `t()` to get a column of column names and a column of counts.
+3. Filter to all rows where `count` is equal to 1.
+Equinox and Orbiting Body contain only one value and can therefore be ignored for further analysis
+```{r}
+asteroids <- asteroids |>
+  select(-c(Equinox, `Orbiting Body`))
+```
+
+## Remove rows that are non-informative
+What do we look for?
+
+- missing values
+- duplicate rows
+
+### Missing values
+The `is.na` function can be used to identify missing values in a dataset and count how many there are as follows:
+```{r}
+sum(is.na(asteroids))
+```
+We see that there are no missing values in the dataset. 
+
+If we find missing values, we can use the following statement to count the number of missing values for each column.
+```{r}
+df <- asteroids |>
+  summarise(across(everything(), ~ sum(is.na(.)))) # <1>
+tibble(nms = names(df), count = t(df)[, 1])
+```
+1. The `summarise` function is used to apply the `sum(is.na(.))` function to each column of the dataset. The `across(everything(), ~ sum(is.na(.)))` syntax applies the function to all columns in the dataset.
+
+If we find missing values, we can decide how to handle them. We can either remove the rows with missing values or impute them using a variety of methods. The choice depends on the amount of missing data and the importance of the variable for our analysis.
+
+
+### Analyze duplicate rows
+The unique identifier in this dataset is the `Neo Reference ID`. As a first step, we can check if there are multiple observations for the same asteroid in the dataset. A quick way to check is to compare the number of rows in the dataset with the number of unique values in the `Neo Reference ID` column.
+```{r}
+dim(asteroids)
+length(unique(asteroids$`Neo Reference ID`))
+``` 
+The dataset contains 4687 rows. The `Neo Reference ID` column however contains only 3692 unique values.
+
+With the following statement, we can identify the `Neo Reference ID` values that are duplicated in the dataset and count how many times they are duplicated.
+```{r}
+asteroids |>
+  group_by(`Neo Reference ID`) |> # <1>
+  filter(n() > 1) |> # <2>
+  mutate(n = n()) |> # <3>
+  select(`Neo Reference ID`, n) |>
+  arrange(desc(n))
+```
+1. We group the dataset by the `Neo Reference ID` column using `group_by`.
+2. We use `filter(n() > 1)` to keep only the groups that have more than one row, i.e. the duplicated `Neo Reference ID` values.
+3. Add the count information to the dataset using `mutate(n = n())` and select only the `Neo Reference ID` and the count column for display.
+
+There are duplicate rows in the dataset. We can look at an example by filtering the dataset for a specific `Neo Reference ID` value.
+```{r}
+asteroids |>
+  filter(`Neo Reference ID` == 3102762) |>
+  glimpse()
+```
+We see that variables like `Absolute Magnitude` and `Est Dia in M(max)` have identical values for each row. They are characteristic for the asteroid and should not change. We should keep them.
+
+Other variables like `Close Approach Date` and `Orbit Determination Date` characterize the specific datapoint. As we are interested in the characteristics of the asteroid, we will remove these columns. We also remove "Miles per hour". It describes the relative velocity of the asteroid and the earth at the time of observation and is characteristic for the specific observation and not the asteroid.
+```{r}
+asteroids <- asteroids |>
+  select(-c(
+    "Close Approach Date", "Epoch Date Close Approach",
+    "Orbit Determination Date", "Miss Dist.(Astronomical)",
+    "Miles per hour")
+  )
+```
+This leaves us with several identical rows in the dataset. We will remove these rows with the `distinct` function.
+```{r}
+asteroids <- asteroids |>
+  distinct()
+```
+
+## Combined data cleaning steps  {#sec-data-pipeline}
+Following this analysis, we can combine the data cleaning steps into a single code block. We also convert the `Hazardous` column to a factor variable. If we later build a classification model, the outcome variable, here `Hazardous`, must be a factor.
+```{r}
+#| message: FALSE
+#| warning: FALSE
+remove_columns <- c("Name", "Est Dia in M(min)",
+  "Semi Major Axis", "Jupiter Tisserand Invariant",
+  "Epoch Osculation", "Mean Motion", "Aphelion Dist",
+  "Equinox", "Orbiting Body", "Orbit Determination Date",
+  "Close Approach Date", "Epoch Date Close Approach",
+  "Miss Dist.(Astronomical)", "Miles per hour")
+
+asteroids <- read_csv(filename) |>
+  select(-all_of(remove_columns)) |>
+  select(-contains("Relative Velocity")) |>
+  select(-contains("Est Dia in KM")) |>
+  select(-contains("Est Dia in Feet")) |>
+  select(-contains("Est Dia in Miles")) |>
+  select(-contains("Miss Dist.(lunar)")) |>
+  select(-contains("Miss Dist.(kilometers)")) |>
+  select(-contains("Miss Dist.(miles)")) |>
+  distinct() |>
+  mutate(Hazardous = as.factor(Hazardous))
+```
+```{r}
+asteroids |> glimpse()
+```
+The data cleaning step leaves us with 15 columns and 3692 rows. The `Neo Reference ID` column is a unique identifier for each asteroid. We will use this column as the row identifier in our analysis.
+
+## Exploratory data analysis
+There are many different ways to explore a dataset. We will look at a few of them here.
+
+:::{.callout-tip title='LLM Prompt' icon='false'}
+With the prepared dataset, we can plan an exploratory data analysis.
+```
+Plan the exploratory data analysis for this dataset. 
+```
+:::
+
+
+### Pairs plot
+A pairs plot gives us a quick overview of the relationship between all variables in the dataset.It is not very informative if you have many variables and many data points. However, it can be useful to identify interesting aspects of your dataset. Here we use the `ggpairs` function from the `GGally` package.
+
+```{r fig-eda-ggpairs}
+#| fig.cap: Scatterplot matrix of the variables in the asteroids dataset.
+#| fig.alt: Scatterplot matrix of the variables in the asteroids dataset.
+#| fig.width: 20
+#| fig.height: 20
+#| fig.align: center
+#| out.width: 100%
+#| message: FALSE
+#| dev: "png"
+#| dpi: 100
+asteroids |>
+  select(-`Neo Reference ID`) |>
+  ggpairs(aes(alpha = 0.1))
+```
+The scatterplot matrix tries to display too much information to be useful. It is more informative if you only have around five features and not too many data points.
+
+::: {.callout-tip title="Useful to know"}
+We control the generation of @fig-eda-ggpairs using a variety of code chunk options. See [Appendix C in Machine Learning with Tidymodels](https://gedeck.github.io/machine-learning-with-tidymodels/src/903-appendix-markdown.html) for more details. 
+:::
+
+
+
+### Distributions
+Distributions are best visualized using histograms or density plots. The `ggplot` function `facet_wrap` is a convenient way of combining several graphs in one figure. In order to use it, we need to convert the tibble from wide to long (`pivot_longer`) to get a data frame with three columns: `Hazardous`, the feature name, and it's value. 
+
+```{r fig-eda-histograms}
+#| fig.cap: Histograms of the variables in the asteroids dataset.
+#| fig.alt: Histograms of the variables in the asteroids dataset.
+#| fig.width: 8
+#| fig.height: 6
+#| fig.align: center
+#| out.width: 100%
+#| message: FALSE
+data <- asteroids |>
+  select(-`Neo Reference ID`) |>
+  pivot_longer(!Hazardous, names_to = "variable", values_to = "value")
+ggplot(data, aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~variable, scales = "free")
+```
+
+Some of the distributions in @fig-eda-histograms are very skewed, e.g. `Est Dia in M(max)` or `Minimum Orbit Intersection`. A good first guess is to take the logarithm of these variables to reduce the skewness of the distribution.
+```{r fig-eda-density-log}
+#| fig.cap: Density plots of the variables in the asteroids dataset with some variables transformed using logarithm.
+#| fig.alt: Density plots of the variables in the asteroids dataset with some variables transformed using logarithm.
+#| fig.width: 8
+#| fig.height: 6
+#| fig.align: center
+#| out.width: 100%
+#| message: FALSE
+data <- asteroids |>
+  select(-`Neo Reference ID`) |>
+  mutate(
+    `Est Dia in M(max)` = log(`Est Dia in M(max)`),
+    Inclination = log(Inclination),
+    `Minimum Orbit Intersection` = log(`Minimum Orbit Intersection`),
+    `Orbit ID` = log(`Orbit ID`),
+    `Orbital Period` = log(`Orbital Period`),
+  ) |>
+  pivot_longer(!Hazardous, names_to = "variable", values_to = "value")
+ggplot(data, aes(x = value, color = Hazardous)) +
+  geom_density() +
+  facet_wrap(~variable, scales = "free")
+```
+The transformed features in @fig-eda-density-log are more evenly distributed. We also see that the distribution of the two classes is different for several variables. For example, the `Absolute Magnitude` is lower for hazardous asteroids. `Est Dia in M(max)` is larger for hazardous asteroids. This differences in the distribution of the features for the two classes is a good indication that we can build a classification model to predict the `Hazardous` variable based on the other features in the dataset.
+
+:::{.callout-tip title='LLM Prompt' icon='false'}
+_Paste_ a screenshot of @fig-eda-density-log into an LLM and ask it to interpret the figure. 
+```
+Interpret this figure showing the distribution
+of the features
+```
+LLMs can be somewhat lazy in their interpretation and state the obvious without providing deeper insights. Follow up with a prompt like this:
+```
+Challenge the interpretation
+```
+This is often much more interesting.
+:::
+
+
+```{r fig-eda-hazardous}
+#| fig.cap: Distribution of the Hazardous variable in the asteroids dataset.
+#| fig.alt: Distribution of the Hazardous variable in the asteroids dataset.
+#| fig.width: 3
+#| fig.height: 3
+#| fig.align: center
+#| out.width: 50%
+ggplot(data, aes(x = Hazardous)) +
+  geom_bar()
+```
+@fig-eda-hazardous shows the distribution of the binary `Hazardous` variable; it is imbalanced. This is something to keep in mind when we later build a classification model. We may need to use techniques to handle imbalanced data.
+
+### Comparing distributions relative to the outcome variable
+The objective of this case study is to predict the `Hazardous` column. @fig-eda-density-log demonstrated already one way of visualizing the relationship between the `Hazardous` column and the other columns in the dataset. A less detailed way is to use boxplots as shown in @fig-eda-boxplots.
+```{r fig-eda-boxplots-log}
+#| fig.cap: Boxplots of the variables in the asteroids dataset
+#|          grouped by the Hazardous column with some variables transformed
+#|          using logarithm.
+#| fig.alt: Boxplots of the variables in the asteroids dataset
+#|          grouped by the Hazardous column with some variables transformed
+#|          using logarithm.
+#| fig.width: 8
+#| fig.height: 8
+#| fig.align: center
+#| out.width: 75%
+data <- asteroids |>
+  select(-`Neo Reference ID`) |>
+  mutate(
+    `Est Dia in M(max)` = log(`Est Dia in M(max)`),
+    Inclination = log(Inclination),
+    `Minimum Orbit Intersection` = log(`Minimum Orbit Intersection`),
+    `Orbit ID` = log(`Orbit ID`),
+    `Orbital Period` = log(`Orbital Period`),
+  ) |>
+  pivot_longer(!Hazardous, names_to = "variable", values_to = "value")
+ggplot(data, aes(x = Hazardous, y = value)) +
+  geom_boxplot() +
+  facet_wrap(~variable, scales = "free")
+```
+
+### Exploring the relationship between two variables
+The lower triangle of the pairs plot in @fig-eda-ggpairs shows the relationship between two variables. It can be interesting to focus on some of them in more detail. 
+```{r fig-eda-scatterplots}
+#| fig.cap: Selected scatterplots comparing two variables in the asteroids dataset.
+#| fig.alt: Selected scatterplots comparing two variables in the asteroids dataset.
+#| fig.width: 6
+#| fig.height: 3
+#| fig.align: center
+#| out.width: 75%
+g1 <- ggplot(asteroids, aes(x = `Absolute Magnitude`,
+    y = `Est Dia in M(max)`, color = Hazardous)) +
+  geom_point(alpha = 0.5) +
+  theme(legend.position = "none")
+g2 <- ggplot(asteroids, aes(x = `Perihelion Distance`,
+    y = `Minimum Orbit Intersection`, color = Hazardous)) +
+  geom_point(alpha = 0.5)
+g1 + g2
+```
+
+@fig-eda-scatterplots shows two examples. The first one compares `Absolute Magnitude` and `Est Dia in M(max)`. We see that there is a strong non-linear relationship between these two variables. In fact, we can assume that one of them is derived through a calculation. In the second example, we compare `Perihelion Distance` and `Minimum Orbit Intersection`. The relationship between these two variables is more complex. However, we observe that hazardous asteroids have a smaller Minimum Orbit Intersection.
+
+
+
+## Summary
+
+This analysis explored a dataset of near-Earth asteroids from NASA's NeoWs API. We defined a series of data preprocessing steps to clean and transform the data:
+
+- remove columns that are non-informative (e.g. unique identifiers, columns with only one value, highly correlated columns)
+- remove rows that are non-informative (e.g. duplicate rows)
+- checked for missing values
+
+The result is the data processing pipeline in @sec-data-pipeline. We will use it again in other live sessions and in homework assignments.
+
+After cleaning the data, we performed an exploratory data analysis and created a few graphs to visualize the distribution an relationship of features.
+
+We also explored the use of LLMs for the following tasks:
+
+- creating a data dictionary
+- planning data cleaning steps
+- planning exploratory data analysis
+- interpreting graphs and following up with a challenge to the interpretation
+
+However, since this dataset is publicly available and likely included in LLM training data, we should note that our results may reflect the LLM's prior knowledge rather than pure inference. For novel datasets, more detailed prompts and data documentation would be essential for meaningful LLM assistance.
+
+
+
+
+## Code {-}
+The code of this chapter is summarized here.
+```{r show-code, ref.label=knitr::all_labels()}
+#| class.source: "codesummary"
+#| code-fold: true
+#| code-summary: "Show the code"
+#| echo: TRUE
+#| eval: FALSE
+```
