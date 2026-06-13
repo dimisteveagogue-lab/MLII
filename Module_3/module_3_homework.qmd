@@ -1,0 +1,436 @@
+---
+title: "Module 3 Homework"
+author: "Dimitri Steve AGOGUE"
+date: today 
+format: 
+  html: default
+  typst:
+    margin: 
+      x: 1in
+      y: 1in
+    include-in-header:
+      text: |
+        #show link: set text(fill: blue)
+editor: visual
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+<!--
+::: {.callout-note}
+In this module, we learned about classification models.
+Assignment (1) tests your understanding of the differences between LDA and QDA.
+In assignment (2), you will build several classification models for the NASA Asteroid dataset and estimate their predictive performance using a holdout/test set. 
+
+Assignment (3) prepares you for the final project by researching approaches to handling class imbalance in classification problems. This part of the assignment is submitted separately in canvas as a peer-reviewed essay.
+
+Use _Tidyverse_ and _Tidymodels_ packages for the assignments.
+
+You can download the [Quarto Markdown file](https://gedeck.github.io/DS-6030/homework/templates/module-3.qmd) and use it as a basis for your solution.
+:::
+
+::: {.callout-warning}
+## LLM use
+You may use LLMs (ChatGPT, Claude, Copilot, etc.) on this assignment. If you do, you must:
+
+1. **Disclose** which LLM you used and roughly what for (concept clarification, code generation, prose review).
+2. **Include the prompts** for any output you used substantially. Paste them into a "LLM use" appendix at the end of your submission.
+3. **Verify the output** --- LLMs frequently make small but plausible-sounding errors (wrong variable names, made-up `tidymodels` functions, wrong claims about dataset properties). Check anything you keep against the course material or the actual data.
+
+The grader will spot-check disclosure. Undisclosed LLM use is treated as a citation failure.
+:::
+-->
+
+```{r}
+#| warning: FALSE
+#| message: FALSE
+library(tidyverse)
+library(tidymodels)
+library(discrim) # For LDA and QDA modeling
+library(ggcorrplot) # For correlation plots
+library(GGally) # For Scatterplot matrix
+library(patchwork) # For combining plots
+library(probably) # For threshold performance
+
+```
+
+
+
+## 1. Differences between LDA and QDA. (5 points) {-}
+
+**(1.1)** If the Bayes decision boundary is linear, do we expect LDA or QDA to perform better on the training set? On the test set? (1 point - discussion)
+
+On the training set, QDA may perform better because it is more flexible and can adapt more closely to the observed training data, reducing training error. On the test set, LDA is expected to perform better because the true Bayes decision boundary is linear, which matches LDA’s structure. QDA’s extra flexibility is unnecessary in this setting and may increase variance by fitting noise in the training data.
+
+**(1.2)** If the Bayes decision boundary is non-linear, do we expect LDA or QDA to perform better on the training set? On the test set? (1 point - discussion)
+
+If the Bayes decision boundary is nonlinear, QDA may perform better on the training set because its greater flexibility allows it to fit more complex patterns. QDA may also perform better on the test set because its quadratic decision boundary can better approximate the true nonlinear boundary. However, this advantage depends on having sufficient training data; with a small sample size, QDA’s higher variance could still hurt test performance.
+
+
+**(1.3)** In general, as the sample size \(n\) increases, do we expect the test prediction accuracy of QDA relative to LDA to improve, decline, or be unchanged? Why? (1 point - discussion)
+
+With increasing sample size \(n\), we generally expect QDA’s test prediction accuracy relative to LDA’s to improve because a sufficiently large dataset helps reduce QDA’s higher variance. So, as \(n\) grows, its weakness becomes less severe, and its flexibility can become more useful. This is especially true if the Bayes decision boundary is nonlinear, because LDA would be misspecified while QDA can better approximate the true boundary. However, if the true boundary is linear, LDA may still perform as well as, or better than QDA, because QDA’s extra flexibility will then not be needed.
+
+**(1.4)** True or False: Even if the Bayes decision boundary for a given problem is linear, we will probably achieve a superior test error rate using QDA rather than LDA because QDA is flexible enough to model a linear decision boundary. Justify your answer. (1 point - discussion)
+
+False. If the Bayes decision boundary is linear, we would not generally expect QDA to achieve a superior test error rate compared with LDA. LDA is correctly aligned with the linear boundary and has lower variance because it estimates a shared covariance matrix. QDA is more flexible, but that flexibility is unnecessary here and may increase variance by fitting noise in the training data, leading to worse test performance.
+
+**(1.5)** Submit **(1.4)** to an LLM verbatim. Ask for True/False plus justification. Compare with your own answer:
+
+If the LLM agrees with you, evaluate whether its justification appeals to bias-variance tradeoff specifically, or to vaguer "flexibility" language.
+If the LLM disagrees, decide who is right and explain why. (1 point - discussion)
+
+I used *ChatGPT* for this section. The LLM answer was in agreement with mine, and it referred to the bias-variance tradeoff in favor of LDA, since LDA is better alligne with a linear Bayes decision boundary. It went further to illustrate QDA's estimate of significantly more parameters leading to potential overfitting of training data in this particular setting. 
+
+
+## 2. NASA: Asteroid classification (11 points) {-}
+The dataset `nasa.csv` contains information about asteroids and if they are considered to be hazardous or not.
+
+(A) Data loading and preprocessing:
+
+**(2.1)** [Load](https://gedeck.github.io/DS-6030/datasets/nasa.csv) and and preprocess the data. Use the code below that we developed in class as your preprocessing pipeline. (1 point - coding)
+
+```{r data-load-processing}
+filename <- "https://gedeck.github.io/DS-6030/datasets/nasa.csv"
+remove_columns <- c("Name", "Est Dia in M(min)",
+  "Semi Major Axis", "Jupiter Tisserand Invariant",
+  "Epoch Osculation", "Mean Motion", "Aphelion Dist",
+  "Equinox", "Orbiting Body", "Orbit Determination Date",
+  "Close Approach Date", "Epoch Date Close Approach",
+  "Miss Dist.(Astronomical)", "Miles per hour")
+asteroids <- read_csv(filename, show_col_types = FALSE) |>
+  select(-all_of(remove_columns)) |>
+  select(-contains("Relative Velocity")) |>
+  select(-contains("Est Dia in KM")) |>
+  select(-contains("Est Dia in Feet")) |>
+  select(-contains("Est Dia in Miles")) |>
+  select(-contains("Miss Dist.(lunar)")) |>
+  select(-contains("Miss Dist.(kilometers)")) |>
+  select(-contains("Miss Dist.(miles)")) |>
+  distinct() |>
+  mutate(Hazardous = as.factor(Hazardous))
+dim(asteroids)
+
+#glimpse(asteroids)
+```
+
+Below, we exclude *Neo Reference ID* and *Orbit ID* because they are identification variables and do not bring meaningful information with regard to the hazardous status of observed objects. We also exclude *Minimum Orbit Intersection* and *Absolute Magnitude* to prevent possible data leakage, since both variables were used in the definition of potentially hazardous objects [see reference](https://cneos.jpl.nasa.gov/about/neo_groups.html).
+
+```{r preprocessing}
+asteroids <- asteroids |> 
+  select(-c("Neo Reference ID", "Orbit ID"))|> 
+  select(-c("Minimum Orbit Intersection", "Absolute Magnitude"))
+
+```
+
+
+**(2.2)** Split the dataset into a training and test set. Use 80% of the data for training and 20% for testing. Use stratified sampling to ensure that the training and test set have the same proportion of hazardous asteroids. (2 points - coding)
+
+```{r data-split}
+set.seed(234)
+
+data.split <- initial_split(asteroids, prop = 0.8, strata = Hazardous)
+asteroids_train <- training(data.split)
+asteroids_test <- testing(data.split) 
+
+
+asteroids_train |>
+  count(Hazardous)|>
+  mutate(prop = n/sum(n))
+
+asteroids_test |>
+  count(Hazardous)|>
+  mutate(prop = n/sum(n))
+
+```
+
+(B) Model training. Build a classification model with _tidymodels_ using four different methods (null model, logistic regression, LDA, and QDA):
+
+**(2.3)** Use the training set to fit the four models. (2 points - coding)
+
+```{r model-spec}
+formula <- Hazardous ~ `Est Dia in M(max)`+ `Orbit Uncertainity` + Eccentricity + 
+  Inclination + `Asc Node Longitude` + `Orbital Period` + `Perihelion Distance` + 
+  `Perihelion Arg` + `Perihelion Time` + `Mean Anomaly`
+
+baseline_model <- null_model(mode = "classification", engine = "parsnip")|>
+  fit(formula, asteroids_train)
+
+logreg_model <- logistic_reg(mode = "classification", engine = "glm")|>
+  fit(formula, asteroids_train)
+
+lda_model <- discrim_linear(mode = "classification", engine = "MASS")|>
+  fit(formula, asteroids_train)
+
+qda_model <- discrim_quad(mode = "classification", engine = "MASS")|>
+  fit(formula, asteroids_train)
+```
+
+
+**(2.4)** For each model, determine and plot the ROC curves for both the training and test set. Compare training vs. test ROC for each model --- is there a sign of overfitting? Do you observe any differences between the models? Use `patchwork` to arrange the individual graphs for the four models in a single figure. (1 point - coding/discussion)
+
+```{r roc-plots}
+roc_plot_helper <- function(model, model_name) {
+
+  predictions <- bind_rows(
+    augment(model, asteroids_train) |> mutate(dataset = "train"),
+    augment(model, asteroids_test) |> mutate(dataset = "test")
+  )
+
+  auc <- predictions |>
+    group_by(dataset) |>
+    roc_auc(
+      truth = Hazardous,
+      .pred_TRUE,
+      event_level = "second"
+    )
+
+  roc_data <- predictions |>
+    group_by(dataset) |>
+    roc_curve(
+      truth = Hazardous,
+      .pred_TRUE,
+      event_level = "second"
+    )
+
+  autoplot(roc_data) +
+    labs(title = model_name)
+}
+
+
+p1 <- roc_plot_helper(baseline_model, "Null Model")
+p2 <- roc_plot_helper(logreg_model, "Logistic Regression")
+p3 <- roc_plot_helper(lda_model, "LDA")
+p4 <- roc_plot_helper(qda_model, "QDA")
+
+(p1 + p2) / (p3 + p4)
+```
+
+As expected, the null model performs approximately at random on both the training and test sets, with ROC curves close to the diagonal line. The logistic regression, LDA, and QDA models all perform substantially better than the null model. For logistic regression and LDA, the training and test ROC curves are relatively close, suggesting little evidence of overfitting. QDA appears to show a slightly larger separation between the training and test curves, especially in the lower false-positive-rate region, so it may be overfitting slightly more than logistic regression and LDA. Overall, however, the train-test gaps are not severe.
+
+**(2.5)** Create a single plot that overlays the ROC curves of the four models for the test set. Which model separates the two classes best?  (1 point - coding/discussion)
+
+```{r roc-plot-test}
+#| warning: false
+
+test_predictions <- bind_rows(
+  augment(baseline_model, asteroids_test) |>
+    mutate(model = "Null model"),
+  augment(logreg_model, asteroids_test) |>
+    mutate(model = "Logistic regression"),
+  augment(lda_model, asteroids_test) |>
+    mutate(model = "LDA"),
+  augment(qda_model, asteroids_test) |>
+    mutate(model = "QDA")
+)
+
+test_predictions |>
+  group_by(model) |>
+  roc_curve(truth = Hazardous,.pred_TRUE, event_level = "second") |>
+  autoplot() +
+  labs(
+    title = "Test-set ROC curves by model", color = "Model")
+
+test_predictions |>
+  group_by(model) |>
+  roc_auc(truth = Hazardous, .pred_TRUE, event_level = "second") |>
+  arrange(desc(.estimate))
+```
+
+The null model performs worst, with an AUC of 0.500, which indicates no discriminatory ability beyond random classification. The three fitted models perform substantially better than the null model and have very similar test-set ROC curves. LDA has the highest test AUC at 0.802, followed closely by logistic regression at 0.799 and QDA at 0.794. Therefore, LDA separates the two classes best by a small margin, but the difference among the three fitted models is modest.
+
+**(2.6)** For each model, determine the threshold that maximizes the F-measure (`yardstick::f_meas`) using the training set. Why is the F-measure a better metric than accuracy in this case? _Hint_: determine the class proportions. Create plots that show the dependence of the F-measure on the threshold. (2 points - coding/discussion)
+
+```{r f-measure-thresholds}
+#| warning: false
+
+threshold_scan <- function(model, data, model_name) {
+  predictions <- model |>
+    augment(data)
+
+  threshold_data <- suppressWarnings(
+    probably::threshold_perf(
+      predictions,
+      truth = Hazardous,
+      estimate = .pred_TRUE,
+      thresholds = seq(0.01, 0.99, 0.01),
+      event_level = "second",
+      metrics = metric_set(f_meas)
+    )
+  ) |>
+    filter(!is.na(.estimate))
+
+  best_threshold <- threshold_data |>
+    arrange(desc(.estimate)) |>
+    slice(1)
+
+  plot <- ggplot(threshold_data, aes(x = .threshold, y = .estimate)) +
+    geom_line() +
+    geom_point(data = best_threshold, color = "red", size = 2) +
+    labs(title = model_name, x = "Threshold", y = "F-measure") +
+    theme_minimal()
+
+  list(plot = plot, threshold = best_threshold)
+}
+
+null_scan <- threshold_scan(baseline_model, asteroids_train, "Null model")
+logreg_scan <- threshold_scan(logreg_model, asteroids_train, "Logistic regression")
+lda_scan <- threshold_scan(lda_model, asteroids_train, "LDA")
+qda_scan <- threshold_scan(qda_model, asteroids_train, "QDA")
+
+(null_scan$plot + logreg_scan$plot) / (lda_scan$plot + qda_scan$plot)
+```
+
+```{r best-threshold}
+
+best_thresholds <- bind_rows(
+  null_scan$threshold |> mutate(model = "Null model"),
+  logreg_scan$threshold |> mutate(model = "Logistic regression"),
+  lda_scan$threshold |> mutate(model = "LDA"),
+  qda_scan$threshold |> mutate(model = "QDA")
+) |>
+  select(model, .threshold, .metric, .estimate) |>
+  arrange(desc(.estimate))
+
+best_thresholds
+```
+
+Using the training set, the threshold that maximizes F-measure is 0.26 for QDA, 0.21 for LDA, and 0.21 for logistic regression. These thresholds are much lower than the default threshold of 0.5, which suggests that a 0.5 cutoff would be too conservative for identifying hazardous asteroids. QDA has the highest training F-measure at 0.509, while LDA and logistic regression are close behind. The null model performs worst, as expected.
+
+The hazardous class is the minority class, making up about 15.6% of the training data. In this setting, accuracy is not ideal because a model can achieve high accuracy by mostly predicting the majority class, FALSE, while missing many hazardous asteroids. The F-measure is more appropriate because it balances precision and sensitivity for the event class, TRUE.
+
+**(2.7)** Determine the accuracy, sensitivity, specificity, and F-measure for each model at the determined thresholds. Which model performs best? How does this compare to the result from the ROC curves? (1 point - coding/discussion)
+
+```{r metrics-at-threshold}
+
+predict_at_threshold <- function(model, data, threshold) {
+  model |>
+    augment(data) |>
+    mutate(
+      .pred_class = if_else(.pred_TRUE >= threshold, "TRUE", "FALSE"),
+      .pred_class = factor(.pred_class, levels = levels(Hazardous))
+    )
+}
+
+classification_metrics <- metric_set(accuracy, sens, spec, f_meas)
+
+metrics_at_threshold <- function(model, data, model_name, threshold) {
+  predictions <- predict_at_threshold(model, data, threshold)
+
+  classification_metrics(
+    predictions,
+    truth = Hazardous,
+    estimate = .pred_class,
+    event_level = "second"
+  ) |>
+    mutate(
+      model = model_name, threshold = threshold)
+}
+```
+
+
+```{r test-metrics-at-threshold}
+threshold_tbl <- best_thresholds |>
+  select(model, threshold = .threshold)
+
+model_metrics <- bind_rows(
+  metrics_at_threshold(
+    baseline_model,
+    asteroids_test,
+    "Null model",
+    threshold_tbl |> filter(model == "Null model") |> pull(threshold)
+  ),
+  metrics_at_threshold(
+    logreg_model,
+    asteroids_test,
+    "Logistic regression",
+    threshold_tbl |> filter(model == "Logistic regression") |> pull(threshold)
+  ),
+  metrics_at_threshold(
+    lda_model,
+    asteroids_test,
+    "LDA",
+    threshold_tbl |> filter(model == "LDA") |> pull(threshold)
+  ),
+  metrics_at_threshold(
+    qda_model,
+    asteroids_test,
+    "QDA",
+    threshold_tbl |> filter(model == "QDA") |> pull(threshold)
+  )
+) |>
+  select(model, threshold, .metric, .estimate) |>
+  arrange(.metric, desc(.estimate))
+
+#model_metrics
+
+model_metrics <- model_metrics |>
+  pivot_wider(names_from = .metric, values_from = .estimate) |>
+  arrange(desc(f_meas))
+
+model_metrics
+```
+
+Using the thresholds selected from the training set, LDA performs best on the test set by F-measure, with an F-measure of 0.477. QDA has the highest sensitivity at 0.724, meaning it identifies the largest proportion of truly hazardous asteroids, but this comes at the cost of lower specificity. LDA provides the best overall balance between sensitivity and specificity among the fitted models.
+
+This result is consistent with the ROC analysis in **(2.5)**, where LDA also had the highest test AUC, although only by a small margin. The comparison also shows why ROC-AUC and threshold-based metrics are not identical: ROC-AUC evaluates class separation across all possible thresholds, while F-measure evaluates classification performance at one selected threshold.
+
+**(2.8)** Without giving the LLM access to your data or class proportions, ask: "I'm building a binary classifier. What probability threshold should I use to convert predicted probabilities into class labels?" Paste the LLM's recommendation.
+
+*ChatGPT* was used once more, and the output was largely detailed and lengthy so, below are pasted opening and summary from said output: 
+
+```text
+The short answer is: it depends entirely on your data and the real-world consequences of your model's mistakes. While 0.5 is the default threshold used by most machine learning libraries, it is rarely the optimal choice for real-world applications. Choosing the right threshold is a balancing act between two types of errors: False Positives (crying wolf) and False Negatives (missing the wolf) (...)
+
+Summary Strategy
+Train your model and output raw probabilities rather than hard 0/1 labels.
+
+Identify your constraint: Are you trying to maximize catch-rate (Recall), precision (Precision), or a clean balance (F1/Youden's J)?
+
+Scan your validation set predictions across a range of thresholds (e.g., 0.01 to 0.99) and select the threshold value that hits your target metric.
+```
+
+Compare with the data-driven threshold you found in **(2.6)**. What did the LLM assume? On a class-imbalanced problem like this one, when would following the LLM's generic advice produce a misleading model? (1 point - discussion)
+
+
+Interestingly, ChatGPT did not specifically make any assumptions. Instead, it centered its answer around three approaches. (1) a default approach for a balanced classes setting where cost of making a False Positive error is equal to that of making a False Negative error; (2) a business/domain cost approach accounting for most real-world scenarios; and (3) a data-driven approach to capture a mathematically optimal threshold. 
+
+## 3. Handling class imbalance in classification problems {-}
+This part of the assignment is submitted separately in canvas as a peer-reviewed essay. It will not be grade here.
+
+<!-- ## 3. Handling class imbalance in classification problems (4 points) {-}
+Write a short essay (about 1/2 page) on the topic of handling class imbalance in classification problems. Here are a few questions to guide your research:
+
+- What is class imbalance, and why is it a problem in classification problems?
+- What are common strategies to handle class imbalance?
+- What are appropriate evaluation metrics for imbalanced classification problems?
+
+Consult 2 or more sources for your research. You can use the following resource to get started:
+
+- https://machinelearningmastery.com/what-is-imbalanced-classification/
+
+Don't forget to reference your sources including the use of large language models like Chat-GPT. -->
+
+
+## LLM Use Appendix {-}
+
+
+- **(1.5)** 
+
+Prompt:
+
+```text
+True or False: Even if the Bayes decision boundary for a given problem is linear, we will probably achieve a superior test error rate using QDA rather than LDA because QDA is flexible enough to model a linear decision boundary. Justify your answer.
+```
+
+- **(2.8)**
+
+```text
+I'm building a binary classifier. What probability threshold should I use to convert predicted probabilities into class labels?
+```
+
+- ChatGPT was used for concept clarification and prose review.

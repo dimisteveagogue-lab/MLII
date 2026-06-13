@@ -1,0 +1,113 @@
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center", fig.pos = "h")
+```
+
+In the first assignment, we used the `Boston` dataset from the `ISLR2` package for an exploratory data analysis. Can we use a principal component analysis (PCA) to understand the data better?
+
+## Load the data and required packages
+```{r}
+#| warnings: false
+#| message: false
+library(tidyverse)
+library(tidymodels)
+library(ggrepel)
+
+boston <- ISLR2::Boston  |>
+  as_tibble()
+boston[1, ]
+```
+
+
+## Visual overview of dataset
+@fig-visualizing-all-variables is a visual representation of all the variables in the Boston dataset.
+```{r fig-visualizing-all-variables}
+#| fig.cap: "All variables in the Boston data"
+#| fig.alt: "All variables in the Boston data"
+#| fig.height: 4
+#| fig.width: 8
+#| out.width: 100%
+df <- boston |>
+  mutate(row = seq_len(nrow(boston))) |>
+  pivot_longer(!row, names_to = "variable", values_to = "value")
+ggplot(df, aes(x = row, y = value)) +
+  geom_line() +
+  facet_wrap(~variable, scales = "free", ncol = 5) +
+  labs(x = "Row number", y = "Value")
+```
+Visualizing a dataset like this can show patterns in the data. Here, we can see that there are areas with higher tax rate on the right. These also show an increased crime rate (`crim`) and higher values of `rad`, `indus`, `nox`, and `ptratio`. 
+
+
+## Principal component analysis (PCA)
+If a dataset contains a large number of correlated features like we see in @fig-visualizing-all-variables, a principal component analysis (PCA) may be a great way to visualize the data. PCA is a form of dimensionality reduction. It is an approach to project high-dimensional data into a lower-dimensional space (e.g. 2D or 3D) while preserving as much of the variance as possible. PCA will be covered in more detail in modules 5 and 10.
+
+We create the PCA projection of the Boston data in _tidymodels_ as follows:
+```{r}
+## define and apply the PCA recipe
+pca_rec <- recipe(data = boston, formula = ~.) |>
+  step_normalize(all_numeric_predictors()) |>  # <1>
+  step_pca(all_numeric_predictors())  # <2>
+boston_pca <- pca_rec |>
+  prep() |>
+  bake(new_data = NULL)
+boston_pca |> head(2)
+
+## add projection to the original data
+boston <- bind_cols(boston, boston_pca)
+```
+1. We first normalize the numeric predictors to have mean 0 and standard deviation 1. This is important for PCA because it is sensitive to the scale of the variables.
+2. We then apply the PCA transformation to all numeric predictors. By default, this will create five principal components. Use the `num_comp` argument to specify a different number.
+
+If you don't have many variables, a _biplot_ is a great way to visualize the transformed data together with the loadings (how the principal components are related to the original variables). @fig-boston-pca shows the biplot of the first two principal components (PCs) of the Boston data with the point colored by the `indus` variable.
+```{r fig-boston-pca}
+#| fig.cap: "Biplot of the first two principal components of the Boston data"
+#| fig.alt: "Biplot of the first two principal components of the Boston data"
+#| fig.height: 4
+#| fig.width: 6
+#| out.width: 100%
+loadings <-  tidy(prep(pca_rec)$steps[[2]], type = "coef") |>
+  pivot_wider(id_cols = "terms", names_from = "component",
+    values_from = "value")
+
+ggplot(boston, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = indus)) +
+  scale_color_viridis_c(direction = -1) +
+  geom_segment(data = loadings,  # <1>
+    aes(xend = 10 * PC1, yend = 10 * PC2, x = 0, y = 0),
+    arrow = arrow(length = unit(0.15, "cm"))) +
+  geom_label_repel(data = loadings,  # <2>
+    aes(x = 10 * PC1, y = 10 * PC2, label = terms),
+    hjust = "left", size = 2)
+```
+1. The `geom_segment` command adds the arrows starting at the origin to the plot that show the loadings of the original variables on the first two principal components.
+2. This adds labels to the ends of the arrows. To avoid overlapping labels, we use the `geom_label_repel` function from the `ggrepel` package to adjusts the position of the labels to minimize overlap.
+
+Considering the meaning of the variables and @fig-boston-pca, can we understand the dataset better?
+
+- `crim`: per capita crime rate by town.
+- `zn`: proportion of residential land zoned for lots over 25,000 sq.ft.
+- `indus`: proportion of non-retail business acres per town.
+- `chas`: Charles River dummy variable (= 1 if tract bounds river; 0 otherwise).
+- `nox`: nitrogen oxides concentration (parts per 10 million).
+- `rm`: average number of rooms per dwelling.
+- `age`: proportion of owner-occupied units built prior to 1940.
+- `dis`: weighted mean of distances to five Boston employment centres.
+- `rad`: index of accessibility to radial highways.
+- `tax`: full-value property-tax rate per $10,000.
+- `ptratio`: pupil-teacher ratio by town.
+- `lstat`: lower status of the population (percent).
+- `medv`: median value of owner-occupied homes in $1000s.
+
+
+
+
+
+### Code {-}
+The code of this chapter is summarized here.
+```{r show-code, ref.label=knitr::all_labels()}
+#| class.source: "codesummary"
+#| code-fold: true
+#| code-summary: "Show the code"
+#| echo: TRUE
+#| eval: FALSE
+```

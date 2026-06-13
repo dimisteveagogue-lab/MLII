@@ -24,8 +24,8 @@ library(kableExtra)
 library(DT)
 ```
 
+## 1. Flexible vs Inflexible Methods (3 points) {.unnumbered}
 
-## 1. Flexible vs Inflexible Methods (3 points) {-}
 For each of parts **(1.1)** through **(1.4)**, indicate whether we would generally expect the performance of a flexible statistical learning method to be better or worse than an inflexible method. Justify your answer.
 
 **(1.1)** The sample size $n$ is extremely large, and the number of predictors $p$ is small. (0.5 points - discussion)
@@ -38,7 +38,7 @@ This is literally the opposite of the previous setting, and we would generally e
 
 **(1.3)** The relationship between the predictors and response is highly non-linear. (0.5 points - discussion)
 
-In this setting, we would generally expect a flexible method to perform better than an inflexible method. Flexible methods are designed to capture complex relationships, including non-linear patterns, between predictors and the response variable. In contrast, inflexible methods may struggle to capture such non-linear relationships, leading to higher bias and worse performance. 
+In this setting, we would generally expect a flexible method to perform better than an inflexible method. Flexible methods are designed to capture complex relationships, including non-linear patterns, between predictors and the response variable. In contrast, inflexible methods may struggle to capture such non-linear relationships, leading to higher bias and worse performance.
 
 **(1.4)** The variance of the error terms, i.e. $\sigma^2 = Var(\epsilon)$, is extremely high. (0.5 points - discussion)
 
@@ -48,49 +48,46 @@ In this setting, we would generally expect an inflexible method to perform bette
 
 My pick was **(1.1)**. The counter-argument from the LLM (Copilot in this case) was certainly valid. It argued that even with a small $p$ and an extremely large $n$, if **the true relationship between the predictors and the response is actually simple**, the inflexible method may outperform the flexible method.
 
+## 2. Predicting Airfare on New Routes (16 points) {.unnumbered}
 
-## 2. Predicting Airfare on New Routes (16 points) {-}
-The following problem takes place in the United States in the late 1990s, when many major US cities were facing issues with airport congestion, partly as a result of the 1978 deregulation of airlines. Both fares and routes were freed from regulation, and low-fare carriers such as Southwest (SW) began competing on existing routes and starting nonstop service on routes that previously lacked it. Building completely new airports is generally not feasible, but sometimes decommissioned military bases or smaller municipal airports can be reconfigured as regional or larger commercial airports. There are numerous players and interests involved in the issue (airlines, city, state and federal authorities, civic groups, the military, airport operators), and an aviation consulting firm is seeking advisory contracts with these players.  The firm needs predictive models to support its consulting service.  One thing the firm might want to be able to predict is fares, in the event a new airport is brought into service. The firm starts with the dataset _Airfares.csv.gz_, which contains real data that were collected between Q3-1996 and Q2-1997.  The variables in these data are listed in the following Table, and are believed to be important in predicting FARE.  Some airport-to-airport data are available, but most data are at the city-to-city level.  One question that will be of interest in the analysis is the effect that the presence or absence of Southwest has on FARE.
+The following problem takes place in the United States in the late 1990s, when many major US cities were facing issues with airport congestion, partly as a result of the 1978 deregulation of airlines. Both fares and routes were freed from regulation, and low-fare carriers such as Southwest (SW) began competing on existing routes and starting nonstop service on routes that previously lacked it. Building completely new airports is generally not feasible, but sometimes decommissioned military bases or smaller municipal airports can be reconfigured as regional or larger commercial airports. There are numerous players and interests involved in the issue (airlines, city, state and federal authorities, civic groups, the military, airport operators), and an aviation consulting firm is seeking advisory contracts with these players. The firm needs predictive models to support its consulting service. One thing the firm might want to be able to predict is fares, in the event a new airport is brought into service. The firm starts with the dataset *Airfares.csv.gz*, which contains real data that were collected between Q3-1996 and Q2-1997. The variables in these data are listed in the following Table, and are believed to be important in predicting FARE. Some airport-to-airport data are available, but most data are at the city-to-city level. One question that will be of interest in the analysis is the effect that the presence or absence of Southwest has on FARE.
 
 | Variable | Description |
-|:-------- |:----------- |
-| S_CODE   | Starting airport's code |
-| S_CITY   | Starting city |
-| E_CODE   | Ending airport's code |
-| E_CITY   | Ending city |
-| COUPON   | Average number of coupons (a one-coupon flight is a nonstop flight, a two-coupon flight is a one-stop flight, etc.) for that route |
-| NEW      | Number of new carriers entering that route between Q3-96 and Q2-97 |
+|:------------------------------|:----------------------------------------|
+| S_CODE | Starting airport's code |
+| S_CITY | Starting city |
+| E_CODE | Ending airport's code |
+| E_CITY | Ending city |
+| COUPON | Average number of coupons (a one-coupon flight is a nonstop flight, a two-coupon flight is a one-stop flight, etc.) for that route |
+| NEW | Number of new carriers entering that route between Q3-96 and Q2-97 |
 | VACATION | Whether (Yes) or not (No) a vacation route |
-| SW       | Whether (Yes) or not (No) Southwest Airlines serves that route |
-| HI       | Herfindahl index: measure of market concentration |
+| SW | Whether (Yes) or not (No) Southwest Airlines serves that route |
+| HI | Herfindahl index: measure of market concentration |
 | S_INCOME | Starting city's average personal income |
 | E_INCOME | Ending city's average personal income |
-| S_POP    | Starting city's population |
-| E_POP    | Ending city's population |
-| SLOT     | Whether or not either endpoint airport is slot-controlled (this is a measure of airport congestion) |
-| GATE     | Whether or not either endpoint airport has gate constraints (this is another measure of airport congestion) |
+| S_POP | Starting city's population |
+| E_POP | Ending city's population |
+| SLOT | Whether or not either endpoint airport is slot-controlled (this is a measure of airport congestion) |
+| GATE | Whether or not either endpoint airport has gate constraints (this is another measure of airport congestion) |
 | DISTANCE | Distance between two endpoint airports in miles |
-| PAX      | Number of passengers on that route during period of data collection |
-| FARE     | Average fare on that route |
+| PAX | Number of passengers on that route during period of data collection |
+| FARE | Average fare on that route |
 
 (A) Data Exploration:
 
 **(2.1)** Load the [Airfares.csv.gz dataset](https://gedeck.github.io/DS-6030/datasets/homework/Airfares.csv.gz) and preprocess the data; drop unnecessary columns and convert categorical variables to factors. Check for missing values and handle them appropriately. (1 point - coding)
 
 ```{r load-dataset}
-airfare_path <- dplyr::case_when(
-  file.exists("Airfares.csv") ~ "Airfares.csv",
-  file.exists("Module_2/Airfares.csv") ~ "Module_2/Airfares.csv",
-  TRUE ~ NA_character_
-)
-
-if (is.na(airfare_path)) {
-  stop("Airfares.csv not found in either current directory or Module_2/")
+airfare_path <- if (file.exists("Airfares.csv")) {
+  "Airfares.csv"
+} else {
+  "Module_2/Airfares.csv"
 }
 
 airfare <- readr::read_csv(airfare_path)
 
-glimpse(airfare)
+#glimpse(airfare)
+
 ```
 
 ```{r data-cleaning}
@@ -105,7 +102,7 @@ airfare_clean <- airfare |>
 
 colSums(is.na(airfare_clean))
 
-glimpse(airfare_clean)
+#glimpse(airfare_clean)
 
 ```
 
@@ -153,74 +150,76 @@ fare_correlations |>
 plot1 <- ggplot(airfare_num, aes(x = DISTANCE, y = FARE))+
   geom_point()+
   geom_smooth(method = "lm")+
-  labs(title = "Scatter Plot of Distance Against Fare",
+  labs(title = "Distance vs Fare",
   x = "Distance (in miles)",
-  y = "Air Fare")+
+  y = "Fare")+
     theme_minimal()
 
 plot2 <- ggplot(airfare_num, aes(x = COUPON, y = FARE))+
   geom_point()+
   geom_smooth(method = "lm")+
-  labs(title = "Scatter Plot of Coupon Against Fare",
+  labs(title = "Coupon vs Fare",
   x = "Coupon",
-  y = "Air Fare")+
+  y = "Fare")+
     theme_minimal()
 
 plot3 <- ggplot(airfare_num, aes(x = E_INCOME, y = FARE))+
   geom_point()+
   geom_smooth(method = "lm")+
-  labs(title = "Scatter Plot of Ending City Income Against Fare",
+  labs(title = "Ending Income vs Fare",
   x = "Ending City Income",
-  y = "Air Fare")+
+  y = "Fare")+
     theme_minimal()
 
-wrap_plots(plot1 | plot2 | plot3)
+wrap_plots(plot1| plot2| plot3, ncol = 1)
 ```
 
-Based on the correlation table and the scatter plots figure, the best single predictor of FARE appears to be DISTANCE. DISTANCE has the strongest correlation with FARE (**0.67**), followed by COUPON (**0.50**) and E_INCOME (**0.33**). This pattern is also well reflected on the scatterplots. 
-
+Based on the correlation table and the scatter plots figure, the best single predictor of FARE appears to be DISTANCE. DISTANCE has the strongest correlation with FARE (**0.67**), followed by COUPON (**0.50**) and E_INCOME (**0.33**). This pattern is also well reflected on the scatterplots.
 
 **(2.3)** Explore the categorical predictors (excluding the first four) by creating individual graphs comparing the distribution of average fare for each category (e.g. box plots). Which categorical predictor seems best for predicting FARE? (2 points - coding/discussion)
 
 ```{r box-plots}
 plot4 <- ggplot(airfare_clean, aes(x = VACATION, y = FARE, fill = VACATION))+
   geom_boxplot()+
-  labs(title = "Distribution of Air Fare by VACATION",
+  labs(title = "VACATION",
   x = "Vacation",
-  y = "Air Fare")+
-    theme_minimal()
+  y = "Fare")+
+    theme_minimal() +
+  theme(legend.position = "none")
   
 plot5 <- ggplot(airfare_clean, aes(x = SW, y = FARE, fill = SW))+
   geom_boxplot()+
-  labs(title = "Distribution of Air Fare by SW Presence",
-  x = "SW Presence",
-  y = "Air Fare")+
-    theme_minimal()
+  labs(title = "SW",
+  x = "Southwest",
+  y = "Fare")+
+    theme_minimal() +
+  theme(legend.position = "none")
 
 plot6 <- ggplot(airfare_clean, aes(x = SLOT, y = FARE, fill = SLOT))+
   geom_boxplot()+
-  labs(title = "Distribution of Air Fare by SLOT Type",
-  x = "Slot Type",
-  y = "Air Fare")+
-    theme_minimal()
+  labs(title = "SLOT",
+  x = "Slot status",
+  y = "Fare")+
+    theme_minimal() +
+  theme(legend.position = "none")
 
 plot7 <- ggplot(airfare_clean, aes(x = GATE, y = FARE, fill = GATE))+
   geom_boxplot()+
-  labs(title = "Distribution of Air Fare by GATE Type",
-  x = "GATE Type",
-  y = "Air Fare")+
-    theme_minimal()
+  labs(title = "GATE",
+  x = "Gate status",
+  y = "Fare")+
+    theme_minimal() +
+  theme(legend.position = "none")
 
 plot_list <- list(plot4, plot5, plot6, plot7)
 wrap_plots(plot_list, ncol = 2)+
   plot_annotation(
-    title = "Visual Exploration of Categorical Variables"
+    title = "Fare Distribution by Categorical Predictors"
   )
   
 ```
 
-Based on these boxplots Southwest presence seems to be the best predictor for Air Fare, because it displays the largest gap in the median Fare between it's categories (the routes where Southwest is present and those where it is not) in comparison to the other predictors. Routes without Southwest have substantially higher media fares than routes with Southwest.
-
+Based on these boxplots, Southwest presence seems to be the best predictor for Air Fare, because it displays the largest gap in the median fare between its categories (the routes where Southwest is present and those where it is not) in comparison to the other predictors. Routes without Southwest have substantially higher median fares than routes with Southwest.
 
 (B) Find a model for predicting the average fare on a new route:
 
@@ -233,7 +232,7 @@ train_data <- training(data.split)
 test_data <- testing(data.split)
 ```
 
-**(2.5)** Train a linear regression model with _tidymodels_ using all predictors. You can ignore the first four predictors (S\_CODE, S\_CITY, E\_CODE, E\_CITY).
+**(2.5)** Train a linear regression model with *tidymodels* using all predictors. You can ignore the first four predictors (S_CODE, S_CITY, E_CODE, E_CITY).
 
 ```{r linear-model-full}
 formula <- FARE ~ COUPON + NEW + VACATION + SW + HI + S_INCOME + E_INCOME + 
@@ -244,7 +243,7 @@ lm_model <- lm_spec |>
   fit(formula, data = train_data)
 ```
 
-- Examine the model coefficients and interpret them.  Which predictors are significant?  (see [Machine learning with tidymodels: Linear regression models](https://gedeck.github.io/machine-learning-with-tidymodels/src/601-linear-regression.html))
+- Examine the model coefficients and interpret them. Which predictors are significant? (see [Machine learning with tidymodels: Linear regression models](https://gedeck.github.io/machine-learning-with-tidymodels/src/601-linear-regression.html))
 
 ```{r model-coefficients}
 coef_tbl <- lm_model |>
@@ -252,6 +251,8 @@ coef_tbl <- lm_model |>
   mutate(
     across(c(estimate, std.error, statistic, p.value), ~ round(.x, 3))
   )
+
+
 
 if (knitr::is_html_output()) {
   coef_tbl |>
@@ -265,41 +266,244 @@ if (knitr::is_html_output()) {
 
 ```
 
-The coefficient signs indicate direction of association with average fare, holding other predictors fixed. DISTANCE has a strong positive association with fare (longer routes are associated with higher fares). SWYes and VACATIONYes are both negative, suggesting routes served by Southwest and vacation routes are associated with lower fares relative to their reference categories. HI is positive, consistent with higher market concentration being associated with higher fares. PAX is negative, suggesting higher-volume routes are associated with lower fares. S_INCOME, E_INCOME, S_POP, and E_POP are positive and statistically significant, while SLOTFree and GATEFree are negative relative to their constrained reference levels. COUPON and NEW are not statistically significant in this full model.
+The coefficient signs indicate the direction of the association with average fare, holding other predictors fixed. *DISTANCE* has a strong positive association with fare (longer routes are associated with higher fares). *SWYes* and *VACATIONYes* are both negative, suggesting routes served by Southwest and vacation routes are associated with lower fares relative to their reference categories. *HI* is positive, consistent with higher market concentration being associated with higher fares. *PAX* is negative, suggesting higher-volume routes are associated with lower fares. *E_INCOME*, *S_POP*, and *E_POP* are positive and statistically significant, while *SLOTFree* and *GATEFree* are negative and statistically significant relative to their constrained reference levels. *COUPON*, *NEW*, and *S_INCOME* are not statistically significant in this full model (using p \< 0.05).
 
-Overall, the following predictors are significatif in the full model: **DISTANCE, SWYes, VACATIONYes, HI, PAX, E_POP, S_POP, GATEFree, SLOTFree, E_INCOME, S_INCOME**
+Overall, (at p \< 0.05) the significant predictors in the full model are **DISTANCE, SWYes, VACATIONYes, HI, PAX, E_POP, S_POP, GATEFree, SLOTFree, and E_INCOME**.
 
-- Determine the model performance using `r^2`, `RMSE` and `MAE` on the training and test set. How does the model perform on the test set?  Is the model overfitting?  How can you tell? (see [Machine learning with tidymodels: Measuring performance of regression models](https://gedeck.github.io/machine-learning-with-tidymodels/src/202-regression-models-2.html)) (2 points - coding/discussion)
+- Determine the model performance using `r^2`, `RMSE` and `MAE` on the training and test set. How does the model perform on the test set? Is the model overfitting? How can you tell? (see [Machine learning with tidymodels: Measuring performance of regression models](https://gedeck.github.io/machine-learning-with-tidymodels/src/202-regression-models-2.html)) (2 points - coding/discussion)
+
+```{r}
+reg_metrics <- metric_set(rmse, mae, rsq)
+
+train_metrics <- augment(lm_model, new_data = train_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(dataset = "train")
+
+test_metrics <- augment(lm_model, new_data = test_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(dataset = "test")
+
+model_metrics <- bind_rows(train_metrics, test_metrics)
+model_metrics
+```
+
+Based on the above metrics, the full linear model performs similarly on training and test data. Since test performance is slightly better (and very close overall), there is no evidence of overfitting; the model appears to generalize well to unseen data.
 
 **(2.6)** After fitting the model from **(2.5)**, paste the data dictionary and the coefficient table into an LLM and ask it to interpret three coefficients of your choice. Evaluate each interpretation: is it a correct correlational claim, or does the LLM slide into causal language ("X causes Y", "increasing X will raise Y")? Rewrite any problematic interpretation to be correctly correlational. (1 point - discussion)
 
+I picked **DISTANCE, VACATIONYes, and HI** for LLM interpretation (Copilot was used once more). Overall, Copilot provided strong and correct interpretations for the selected coefficients:
+
+*DISTANCE*: Strong interpretation, with no explicit slide into causal language identified.
+
+*VACATIONYes*: Mixed interpretation. Copilot stated that "Being a vacation route significantly reduces fares". This is a slide into causal language. A better formulation would have been: routes classified as vacation routes are associated with about \$38.22 lower average fare than non-vacation routes, holding other predictors fixed.
+
+*HI*: Causal slips such as "A one-unit increase in the Herfindahl Index increases fares by \$0.009", and "Higher concentration leads to higher prices" were identified. Better formulation: higher HI (more concentrated markets) is associated with higher average fares, holding other predictors fixed; a 1,000-point HI increase corresponds to about \$9 higher predicted fare.
+
 **(2.7)** Taking the results from **(2.2)**, **(2.3)**, and **(2.5)** into account, build a model that includes only the most important predictors you identified. Determine the model performance and compare with the full model from **(2.5)**. (2 points - coding/discussion)
 
-**(2.8)** Using the models from **(2.5)** and **(2.7)**, predict the average fare on a route with the following characteristics: COUPON = 1.202, NEW = 3, VACATION = No, SW = No, HI = 4442.141, S\_INCOME = \$28,760, E\_INCOME = \$27,664, S\_POP = 4,557,004, E\_POP = 3,195,503, SLOT = Free, GATE = Free, PAX = 12,782, DISTANCE = 1976 miles. _Hint_: make sure that you treat the categorical variables in the same way as in the training data. (1 point - coding)
+```{r reduced-model}
+
+reduced_formula <- FARE ~ VACATION + SW + HI + E_INCOME + S_POP + E_POP + 
+  SLOT + GATE + DISTANCE + PAX
+
+reduced_model <- linear_reg(engine = "lm", mode = "regression") |>
+  fit(reduced_formula, data = train_data)
+
+tidy(reduced_model)
+
+```
+
+```{r models-comparison}
+
+reg_metrics <- metric_set(rmse, mae, rsq)
+
+full_train <- augment(lm_model, new_data = train_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(model = "full", dataset = "train")
+
+full_test <- augment(lm_model, new_data = test_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(model = "full", dataset = "test")
+
+reduced_train <- augment(reduced_model, new_data = train_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(model = "reduced", dataset = "train")
+
+reduced_test <- augment(reduced_model, new_data = test_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(model = "reduced", dataset = "test")
+
+bind_rows(full_train, full_test, reduced_train, reduced_test) |>
+  arrange(.metric, dataset, model)
+```
+
+I built a reduced model by removing the non-significant predictors from the full model. The reduced model performed nearly identically to the full model on the holdout set ($RMSE$ 34.8 vs 34.7, $MAE$ 26.6 vs 26.4, $R^2$ 0.797 vs 0.798). Since predictive accuracy is effectively unchanged while using fewer predictors, the reduced model is preferable for simplicity and interpretability.
+
+**(2.8)** Using the models from **(2.5)** and **(2.7)**, predict the average fare on a route with the following characteristics: COUPON = 1.202, NEW = 3, VACATION = No, SW = No, HI = 4442.141, S_INCOME = \$28,760, E_INCOME = \$27,664, S_POP = 4,557,004, E_POP = 3,195,503, SLOT = Free, GATE = Free, PAX = 12,782, DISTANCE = 1976 miles. *Hint*: make sure that you treat the categorical variables in the same way as in the training data. (1 point - coding)
+
+```{r predict-new-route}
+
+new_route <- tibble(
+  COUPON = 1.202,
+  NEW = 3,
+  VACATION = factor("No", levels = levels(train_data[["VACATION"]])),
+  SW = factor("No", levels = levels(train_data[["SW"]])),
+  HI = 4442.141,
+  S_INCOME = 28760,
+  E_INCOME = 27664,
+  S_POP = 4557004,
+  E_POP = 3195503,
+  SLOT = factor("Free", levels = levels(train_data[["SLOT"]])),
+  GATE = factor("Free", levels = levels(train_data[["GATE"]])),
+  PAX = 12782,
+  DISTANCE = 1976
+)
+
+route_predictions <- bind_rows(
+  predict(lm_model, new_data = new_route) |>
+    mutate(model = "Full model"),
+  predict(reduced_model, new_data = new_route) |>
+    mutate(model = "Reduced model")
+) |>
+  select(model, predicted_fare = .pred) |>
+  mutate(predicted_fare = round(predicted_fare, 2))
+
+route_predictions |>
+  knitr::kable(
+    caption = "Predicted average fare for the new route",
+    digits = 2
+  )
+```
+
+The predicted average fare for the new route is approximately \$250 using both the full and reduced models. The close agreement is expected because the reduced model had nearly identical holdout performance to the full model in (2.7).
 
 **(2.9)** Using the smaller model from **(2.7)**, predict the reduction in average fare on the route in **(2.8)** if Southwest decides to cover this route. (1 point - coding/discussion)
+
+```{r southwest-reduction}
+
+new_route_sw <- new_route |>
+  mutate(
+    SW = factor("Yes", levels = levels(train_data[["SW"]]))
+  )
+
+sw_comparison <- bind_rows(
+  predict(reduced_model, new_data = new_route) |>
+    mutate(scenario = "Southwest = No"),
+  predict(reduced_model, new_data = new_route_sw) |>
+    mutate(scenario = "Southwest = Yes")
+) |>
+  select(scenario, predicted_fare = .pred)
+
+sw_reduction <- sw_comparison |>
+  summarise(
+    predicted_reduction = predicted_fare[scenario == "Southwest = No"] -
+      predicted_fare[scenario == "Southwest = Yes"]
+  )
+
+sw_comparison |>
+  mutate(predicted_fare = round(predicted_fare, 2)) |>
+  knitr::kable(
+    caption = "Predicted fare comparison with and without Southwest",
+    digits = 2
+  )
+
+sw_reduction |>
+  mutate(predicted_reduction = round(predicted_reduction, 2)) |>
+  knitr::kable(
+    caption = "Predicted fare reduction from Southwest service",
+    digits = 2
+  )
+```
+
+Using the reduced model, the predicted fare is \$249.90 when Southwest does not serve the route and \$203.15 when Southwest does serve the route. The predicted reduction is therefore about \$46.75 in average fare if Southwest covers the route.
 
 (C) Predictors:
 
 **(2.10)** In reality, which of the factors will not be available for predicting the average fare from a new airport (i.e., before flights start operating on those routes)? Which ones can be estimated? How? (1 point - discussion)
 
+*Factors that may not be readily available:* - PAX, - COUPON, - NEW
+
+*Factors that can be estimated:* - VACATION: Can be classified from the city/route context. - S_INCOME, E_INCOME: Can be estimated from census/economic data for the origin and destination cities. - SW: Can be known if Southwest has announced whether it will serve the route - S_POP, E_POP: Can be estimated from census/population data. - SLOT, GATE: Can be known from airport operating constraints. - DISTANCE: Known from airport geography. - HI: May be estimated from expected airline market concentration
+
 **(2.11)** Train a model that includes only factors that are available before flights begin to operate on the new route. (1 point - coding)
+
+```{r pre-operation-model}
+
+pre_ops_formula <- FARE ~ VACATION + SW + HI + S_INCOME + E_INCOME +
+  S_POP + E_POP + SLOT + GATE + DISTANCE
+
+pre_ops_model <- linear_reg(engine = "lm", mode = "regression") |>
+  fit(pre_ops_formula, data = train_data)
+
+pre_ops_coef <- pre_ops_model |>
+  tidy() |>
+  mutate(
+    across(c(estimate, std.error, statistic, p.value), ~ round(.x, 3))
+  )
+
+pre_ops_coef |>
+  knitr::kable(
+    caption = "Pre-operation model coefficients"
+  )
+```
 
 **(2.12)** Compare the predictive accuracy of this model with models from **(2.5)** and **(2.7)**. Is this model good enough, or is it worthwhile reevaluating the model once flights begin on the new route? (1 point - discussion)
 
+```{r compare-pre-operation-model}
+pre_ops_train <- augment(pre_ops_model, new_data = train_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(model = "pre-operation", dataset = "train")
 
-## LLM Use Appendix {-}
+pre_ops_test <- augment(pre_ops_model, new_data = test_data) |>
+  reg_metrics(truth = FARE, estimate = .pred) |>
+  mutate(model = "pre-operation", dataset = "test")
+
+all_model_metrics <- bind_rows(
+  full_train,
+  full_test,
+  reduced_train,
+  reduced_test,
+  pre_ops_train,
+  pre_ops_test
+) |>
+  select(model, dataset, .metric, .estimate) |>
+  arrange(.metric, dataset, model)
+
+all_model_metrics |>
+  mutate(.estimate = round(.estimate, 3)) |>
+  knitr::kable(
+    caption = "Performance comparison across full, reduced, and pre-operation models"
+  )
+```
+
+Overall, the pre-operation model performs slightly worse than the full and reduced models, but its predictive accuracy remains reasonably close. On the holdout set, it has the following performance: $RMSE$ = 35.710, $MAE$ = 27.530, and $R^2$ = 0.787, compared with $RMSE$ = 34.657, $MAE$ = 26.354, and $R^2$ = 0.798 for the full model. This suggests that even though the pre-operation model is useful for an initial fare prediction before flights begin, it would still be worthwhile to reevaluate the model once flights begin operating, those variables become available, and all useful variables are collected.
+
+## LLM Use Appendix {.unnumbered}
 
 For **(1.5)**, I used GitHub Copilot to generate a counter-argument to my recommendation for **(1.1)**.
 
 Prompt:
 
-```text
+``` text
 question context: indicate whether we would generally expect the performance of a flexible statistical learning method to be better or worse than an inflexible method. Justify your answer.
 
 If the sample size $n$ is extremely large, and the number of predictors $p$ is small:
 
-My answer: In this setting we would, in general, expect a flexible method to perform better than an inflexible method. Because with extremely large sample size $n$, flexible methods can improve their variance and capture more complex relationships/patterns since there are enoght data points to learn from. Also, the small number of predictors $p$ implies les noise, hence reduces the risk of overfitting. In contrast, inflexible methods may not be able to capture the underlying relationships as well, which may lead to higher bias and worse performance.
+My answer: In this setting we would, in general, expect a flexible method to perform better than an inflexible method. Because with extremely large sample size $n$, flexible methods can improve their variance and capture more complex relationships/patterns since there are enough data points to learn from. Also, the small number of predictors $p$ implies less noise, hence reduces the risk of overfitting. In contrast, inflexible methods may not be able to capture the underlying relationships as well, which may lead to higher bias and worse performance.
 
-provide an opposite argumentation to my recommendation .
+Provide an opposite argument to my recommendation.
+```
+
+For **(2.6)**, I used Copilot for the interpretation task, as suggested. Prompt:
+
+``` text
+Based on the provided references, interpret the coefficients for distance, vacationYes, and HI.
+```
+
+For document polishing, ChatGPT was used to review the completed document and correct typos, spelling mistakes, and minor grammar issues.
+
+Prompt:
+
+``` text
+Review and suggest fix for all typos in the document.
 ```

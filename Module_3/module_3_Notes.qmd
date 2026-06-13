@@ -1,0 +1,634 @@
+```{r setup}
+#| include: FALSE
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+## Wine Quality Dataset
+The data are the results of a chemical analysis of wines grown in the same region in the north of Portugal. The goal is to model wine quality based on physicochemical tests (see [Cortez et al., 2009](https://doi.org/10.1016/j.dss.2009.05.016) and [download the datasets](https://archive.ics.uci.edu/dataset/186/wine+quality))
+
+The dataset uses a quality scale from 0 to 10. However, we convert the quality scale into a binary outcome for this exercise.
+
+Here is what we are going to do in this case study:
+
+- **Data Re-engineering:** Combine red and white wine datasets and transform numerical quality scores into a binary target (high vs. low quality).
+
+- **Exploratory Data Analysis:** Leverage faceted boxplots to reveal how chemical properties—like alcohol and acidity—differ between high- and low-quality wines.
+
+- **Model Training:** Build and compare four distinct classification approaches: a baseline Null model, Logistic Regression, Linear Discriminant Analysis (LDA), and Quadratic Discriminant Analysis (QDA).
+
+- **Advanced Evaluation:** Move beyond basic accuracy by evaluating your models using ROC curves, Area Under the Curve (AUC), and confusion matrices.
+
+- **Threshold Tuning:** Discover why the default 0.5 probability threshold isn't always optimal, and use the probably package to scan for the exact threshold that maximizes model performance.
+
+- **Tidymodels Workflows:** Streamline your entire machine learning pipeline by bundling data preprocessing recipes and model specifications into clean, reproducible workflows.
+
+
+## Preparing the environment
+Load all required packages
+```{r}
+#| message: FALSE
+#| warning: FALSE
+library(tidyverse)
+library(tidymodels)
+library(discrim) # for LDA and QDA
+library(ggcorrplot)  # for correlation plot
+library(GGally)  # scatterplot matrix
+library(patchwork)  # for combining plots
+library(probably)  # for threshold_perf
+```
+
+
+## Load the data and inspect
+Inspecting the file shows that the data is separated by `;` and the first row contains the column names. We can use `read_delim` to read the data.
+```{r load_wine_quality_data}
+#| message: FALSE
+#| warning: FALSE
+url <- "https://gedeck.github.io/DS-6030/datasets/wine+quality"
+red_file <- paste(url, "winequality-red.csv", sep = "/")
+white_file <- paste(url, "winequality-white.csv", sep = "/")
+
+red_wine <- read_delim(red_file, delim = ";")
+white_wine <- read_delim(white_file, delim = ";")
+
+red_wine |>
+  glimpse()
+```
+Both datasets contain the same `r dim(red_wine)[2]` variables. The `quality` column is the response variable and the other columns are the predictors. The `quality` column is an integer between 0 and 10. It is a nominal variable and we will convert it to a binary outcome variable for this case study.
+The red wine dataset contains `r dim(red_wine)[1]` rows and the white wine dataset contains `r dim(white_wine)[1]` rows.
+
+For further analysis, we combine the two datasets after adding a `type` column that defines the type of wine. This new column is converted to a factor with the levels `red` and `white`.
+```{r combine_wine_datasets}
+raw_wine <- bind_rows(
+  red_wine |> mutate(type = "red"),
+  white_wine |> mutate(type = "white")
+) |>
+  mutate(type = factor(type, levels = c("red", "white")))
+```
+
+
+
+## Exploratory data analysis
+The objective of this case study is to predict the `quality` of the wine with a binary classifier. We can use `ggplot` to create a bar chart of the `quality` column. The `position="dodge"` argument shows the two types of wine side by side.
+```{r fig-eda-histogram}
+#| fig.cap: Distribution of quality scores in the wine quality dataset by type of wine.
+#| fig.alt: Distribution of quality scores in the wine quality dataset by type of wine.
+#| fig.width: 5
+#| fig.height: 4
+#| fig.align: center
+#| out.width: 75%
+raw_wine |>
+  ggplot(aes(x = quality, fill = type)) +
+  geom_bar(position = "dodge")
+```
+The quality scores are not evenly distributed. @fig-eda-histogram shows that the majority of the wines have a quality score of 5, 6, or 7.
+```{r}
+wine <- raw_wine |>
+  mutate(
+    quality = ifelse(quality >= 7, "high", "low"),
+    quality = factor(quality, levels = c("high", "low")), # <1>
+  )
+```
+1.  In principle, you can define the factors either as high/low or as low/high. By default, the factor levels will be in alphabetical order. It is preferable to set the outcome of interest as the first level. This is the case here. However, being explicit makes your code easier to understand and maintain.
+
+Repeat the bar charts with the binary outcome
+```{r fig-eda-histogram-binary}
+#| fig.cap: Distribution of quality in the wine quality dataset by type of wine.
+#| fig.alt: Distribution of quality in the wine quality dataset by type of wine.
+#| fig.width: 5
+#| fig.height: 4
+#| fig.align: center
+#| out.width: 75%
+wine |>
+  ggplot(aes(x = quality, fill = type)) +
+  geom_bar(position = "dodge")
+```
+
+With the objective of the study in mind, we will focus on the relationship between the `quality` column and the other columns in the dataset.
+Let's create boxplots for each variable grouped by the `quality` and `type` columns.  
+```{r fig-eda-boxplots}
+#| fig.cap: Boxplots of the variables in the wine quality dataset grouped by the quality column and wine type.
+#| fig.alt: Boxplots of the variables in the wine quality dataset grouped by the quality column and wine type.
+#| fig.width: 9
+#| fig.height: 8
+#| fig.align: center
+#| out.width: 75%
+df <- wine |>
+  pivot_longer(!c(quality, type), names_to = "variable", # <1>
+    values_to = "value")
+ggplot(df, aes(x = quality, y = value, group = quality)) +
+  geom_boxplot() +
+  facet_wrap(variable ~ type, scales = "free", ncol = 6) # <2>
+```
+1. The `pivot_longer` function is used to convert the dataset from wide format to long format. This allows us to create boxplots for each variable in a single plot using `facet_wrap`.
+2. The `scales = "free"` ensures that each plot has its own y-axis scale.
+
+@fig-eda-boxplots shows the distribution of each variable grouped by the `quality` column. There are visible similarities and differences between the two types of wine. We can highlight a few in @fig-eda-boxplots-focused. The amount of `alcohol` separates `quality` well. The `citric acid` and `volatile acidity` columns show correlation with the `quality` column for the `red` wines, but no correlation for the `white` wines. For `pH`, the correlation is weak but opposite for the two types of wine.
+
+```{r fig-eda-boxplots-focused}
+#| fig.cap: Boxplots of the variables in the wine quality dataset grouped by the quality column and type of wine.
+#| fig.alt: Boxplots of the variables in the wine quality dataset grouped by the quality column and type of wine.
+#| fig.width: 9
+#| fig.height: 6
+#| fig.align: center
+#| out.width: 75%
+ggplot(df |>
+    filter(variable %in% c("alcohol", "citric acid",
+        "volatile acidity", "pH")),
+  aes(x = quality, y = value, group = quality)) +
+  geom_boxplot() +
+  facet_wrap(variable ~ type, scales = "free", ncol = 4) # <2>
+```
+
+Based on this result, it could be useful to build separate models for the two types of wine or at least include an interaction between the `type` column and some of the other columns in the model, e.g. `pH` and `citric acid`. Here, we train only the combined model.
+
+## Training classification models
+Model training is not different for classification models compared to regression models. We use the same approach as in the previous module. The dataset is split into training and holdout set using a 80-20 split with stratified sampling of the `type` variable. The models are trained using the training set and evaluated on the holdout set.
+```{r holdout-set}
+set.seed(1234) # <1>
+
+wine_split <- initial_split(wine, prop = 0.8, strata = type)
+wine_train <- training(wine_split)
+wine_holdout <- testing(wine_split)
+```
+1. Random seed to ensure reproducibility of the results.
+
+The models use `quality` as the outcome and all other variables (excl. `type`) as predictors.
+We train the following classification models. 
+
+- `null_model`: A simple model that predicts the most common class; it will be used as a baseline model.
+- `logistic_reg`: A logistic regression model.
+- `discrim_linear`: A linear discriminant analysis (LDA) model.
+- `discrim_quad`: A quadratic discriminant analysis (QDA) model.
+```{r individual-models}
+formula <- quality ~ `fixed acidity` + `volatile acidity` + # <1>
+  `citric acid` + `residual sugar` + chlorides +
+  `free sulfur dioxide` + `total sulfur dioxide` + density +
+  pH + sulphates + alcohol + type
+
+baseline_model <- null_model(mode = "classification",
+  engine = "parsnip") |> # <2>
+  fit(formula, wine_train)
+
+logreg_model <- logistic_reg(mode = "classification",
+  engine = "glm") |>
+  fit(formula, wine_train)
+
+lda_model <- discrim_linear(mode = "classification",
+  engine = "MASS") |>
+  fit(formula, wine_train)
+
+qda_model <- discrim_quad(mode = "classification",
+  engine = "MASS") |>
+  fit(formula, wine_train)
+```
+1. The backticks in `fixed acidity` allow referencing variables with names that contain spaces
+2. We specify both the `mode` and `engine` explicitly. In this case, all the models use the specified engines by default. However, it is good practice to be explicit about the engine as well.
+
+## Prediction
+In classification models, we can predict the score / probability of the classes:
+```{r}
+predict(logreg_model, wine_holdout, type = "prob") |> head(5)
+```
+The function returns a tibble with the predicted probabilities for each class. The column names are prefixed with `.pred_` followed by the class name. In our case, we have two columns: `.pred_high` and `.pred_low`. The values in these columns represent the predicted probability of the wine being of high or low quality, respectively.
+
+The scores / probabilities are what the model actually calculates. But this is not a classification. To get the predicted class, we don't specifiy the `type`:
+```{r}
+predict(logreg_model, wine_holdout) |> head(5)
+```
+How is the class derived from the probability? The prediction uses a threshold of 0.5. This threshold is arbitrary and for a specific use case, we may want to adjust the threshold. More about this later.
+
+The `augment` function is a convenient way to get the original data along with the predictions. It returns a tibble with the original data and additional columns for the predicted probabilities and classes.
+```{r}
+augment(logreg_model, wine_holdout) |> head(5)
+```
+
+
+## Classification metrics
+Classification metrics fall into two groups:
+
+- Probability based metrics like ROC-AUC
+- Class based metrics like accuracy
+
+Not all metrics are independent of the level ordering of the outcome variable. There is usually an outcome that is more of interest (e.g. Is it cancer? Is it toxic?). We need to define the level of interest (`event_level`) to get the correct result.
+
+While _tidymodels_ allows to control the `event_level` easily, it is best to define the level of interest as the first one when we factor the outcome variable. In our case, we set:
+```
+  factor(quality, levels = c("high", "low")),
+```
+as `high` quality is what we are interested in.
+
+
+### Evaluating overall performance independent of threshold (ROC curves)
+The ROC curve assess the overall performance of the classifier, i.e. how well it separates the two classes.
+
+The `roc_curve` function requires the outcome (here `quality`) and the predicted score of the class (level) of interest (here `.pred_high`). We also need to specify if this class is the first or second level in the factor definition.
+```{r fig-ROC-curve}
+#| fig.cap: ROC curve of classification
+#| fig.alt: ROC curve of classification
+#| out.width: 40%
+#| fig.width: 4
+predictions <- logreg_model |>
+  augment(wine_holdout)
+roc_1 <- predictions |>
+  roc_curve(truth = quality, .pred_high, event_level = "first")
+autoplot(roc_1)
+```
+
+What happens if we get the `event_level` wrong? @fig-incorrect-event-level shows what happens.
+```{r fig-incorrect-event-level}
+#| fig.cap: Effect of incorrect event level
+#| fig.alt: Effect of incorrect event level
+#| fig.width: 8
+#| out.width: 80%
+roc_2 <- predictions |>
+  roc_curve(truth = quality, .pred_high, event_level = "second")
+g1 <- autoplot(roc_1) +
+  labs(title = "Correct event level")
+g2 <- autoplot(roc_2) +
+  labs(title = "Incorrect event level")
+g1 + g2
+```
+
+:::{.callout-important}
+If you observe a ROC curve that looks like the one on the right in @fig-incorrect-event-level, you must specify the correct `event_level`. Check the ordering of the levels of the outcome. Here it is high/low and our level of interest is `high`, so we specify `event_level="first"`.
+:::
+
+To compare several models, we can quantify the ROC curve using the area under the curve (AUC). The `roc_auc` function calculates the AUC of the ROC curve:
+```{r}
+roc_auc(predictions, quality, .pred_high, event_level = "first")
+```
+We also need to specify the `event_level` here. This is what we get for a wrong `event_level`
+```{r}
+roc_auc(predictions, quality, .pred_high, event_level = "second")
+```
+For reasonable models, you should always get an AUC value above 0.5.
+
+
+The result of `roc_curve` can be plotted using `autoplot`. We can use this to compare the ROC curves of the different models.
+```{r fig-roc-curves}
+#| fig.cap: ROC curves of the four classification models determined using the holdout set.
+#| fig.alt: ROC curves of the four classification models determined using the holdout set.
+#| fig.width: 7
+#| fig.height: 7
+#| out.width: 75%
+get_roc_plot <- function(model, data, model_name) {
+  predictions <- model |>
+    augment(data)
+  auc <- roc_auc(predictions, quality, .pred_high, event_level = "first")
+  title <- paste0(model_name, " (AUC=", round(auc$.estimate, 3), ")")
+  roc_data <- predictions |>
+    roc_curve(truth = quality, .pred_high, event_level = "first")
+  g <- autoplot(roc_data) +
+    labs(title = title)
+  return(g)
+}
+
+g1 <- get_roc_plot(baseline_model, wine_holdout, "Null model")
+g2 <- get_roc_plot(logreg_model, wine_holdout, "Logistic regression")
+g3 <- get_roc_plot(lda_model, wine_holdout, "LDA")
+g4 <- get_roc_plot(qda_model, wine_holdout, "QDA")
+(g1 + g2) / (g3 + g4)
+```
+
+Invidual ROC curves are useful to assess the performance of each model. However, it is difficult to compare the models based on the individual ROC curves. We can overlay the ROC curves of the different models in a single plot to compare them more easily.
+```{r fig-roc-curves-overlaid}
+#| fig.cap: Overlaid ROC curves of the four classification models determined using the holdout set.
+#| fig.alt: Overlaid ROC curves of the four classification models determined using the holdout set.
+#| fig.width: 5
+#| fig.height: 5
+#| out.width: 60%
+bind_rows(
+  augment(baseline_model, wine_holdout) |>
+    mutate(model = "Null model"), # <1>
+  augment(logreg_model, wine_holdout) |>
+    mutate(model = "Logistic regression"),
+  augment(lda_model, wine_holdout) |>
+    mutate(model = "LDA"),
+  augment(qda_model, wine_holdout) |>
+    mutate(model = "QDA")
+) |>
+  group_by(model) |> # <2>
+  roc_curve(truth = quality, .pred_high, event_level = "first") |>
+  autoplot()
+```
+1. We first combine all the predictions into a single tibble. To identify the individual models, we add the `model` column.
+2. The `model` column is used to group the data which are then processed by the `roc_curve` function to calculate the ROC curve for each model separately.
+
+@fig-roc-curves-overlaid shows the overlaid ROC curves of the four classification models. The null model has the worst performance with an AUC of around 0.5. The other three models have similar performance with AUC values around 0.8. The QDA model has a slightly better performance.
+
+### Evaluating model performance - classification based (e.g. accuracy)
+In contrast to the ROC curve, classification based metrics measure the performance at a specific threshold (default 0.5). They are derived from the confusion matrix:
+```{r}
+conf_mat(predictions, truth = quality, estimate = .pred_class)
+```
+
+
+The `yardstick` package provides a collection of functions to evaluate model performance. `yardstick::metrics` returns a collection of commonly used metrics (`accuracy` and Cohen's kappa `kap`).
+These metrics may not be sufficient for your use case. E.g. `j_index` or `f_meas` may be more appropriate for imbalanced datasets.
+```{r}
+metrics(predictions, truth = quality, estimate = .pred_class)
+j_index(predictions, truth = quality, estimate = .pred_class)
+```
+If you want to calculate multiple metrics at the same time, combine several metrics into a custom set of metrics using `yardstick::metric_set`. It returns a function that is used in the same way as the `metrics` function.
+```{r}
+custom_metrics <- yardstick::metric_set(accuracy, f_meas, sens, spec)
+custom_metrics(predictions, truth = quality, estimate = .pred_class)
+```
+
+
+
+### Evaluating our models - metrics
+In order to evaluate the models, we calculate the accuracy, kappa, and the area under the ROC curve (AUC) for the training and the holdout set. We could repeat this code 8 times for each model and training and holdout sets. To reduce the amount of code, we define a few utility functions.
+
+First a function that calculates all the training and holdout metrics for a given model and returns a tibble with the results.
+```{r utility-functions}
+calculate_metrics <- function(model, train, holdout, model_name) {
+  pred_train <- model |> augment(train)
+  pred_holdout <- model |> augment(holdout)
+  df <- bind_rows(
+    # Accuracy of training set
+    bind_cols(
+      model = model_name,
+      dataset = "train",
+      metrics(pred_train, truth = quality, estimate = .pred_class),
+    ),
+    # AUC of ROC curve of training set
+    bind_cols(
+      model = model_name,
+      dataset = "train",
+      roc_auc(pred_train, quality, .pred_high, event_level = "first"), # <1>
+    ),
+    # Accuracy of holdout set
+    bind_cols(
+      model = model_name,
+      dataset = "holdout",
+      metrics(pred_holdout, truth = quality, estimate = .pred_class),
+    ),
+    # AUC of ROC curve of holdout set
+    bind_cols(
+      model = model_name,
+      dataset = "holdout",
+      roc_auc(pred_holdout, quality, .pred_high, event_level = "first"),
+    ),
+  )
+  return(df)
+}
+```
+1. The ROC-AUC needs to be calculated separately as it is not a class based metric and requires the predicted probabilities. The `event_level` needs to be specified to get the correct result.
+
+Create a nicer representation of the metrics table. 
+```{r}
+metrics_table <- function(all_metrics) {
+  all_metrics <- all_metrics |>
+    arrange(model, desc(dataset)) |>
+    pivot_wider(names_from = .metric, values_from = .estimate) |>
+    select(-.estimator) |>
+    knitr::kable(digits = 3) |>
+    kableExtra::kable_styling(full_width = FALSE)
+  return(all_metrics)
+}
+```
+```{r tbl-metrics-table}
+#| tbl-cap: Metrics for the classification models determined using the training and the holdout sets.
+all_metrics <- bind_rows(
+  calculate_metrics(baseline_model, wine_train, wine_holdout,
+    "reference"),
+  calculate_metrics(logreg_model, wine_train, wine_holdout,
+    "logreg"),
+  calculate_metrics(lda_model, wine_train, wine_holdout,
+    "LDA"),
+  calculate_metrics(qda_model, wine_train, wine_holdout,
+    "QDA"),
+)
+metrics_table(all_metrics)
+```
+Tables can be difficult to read. A graph can be more intuitive to compare the models. We can use `ggplot` to create a graph of the metrics.
+```{r fig-metrics-graph}
+#| fig.cap: Metrics of the classification models determined using the training and the holdout sets
+#| fig.alt: Metrics of the classification models determined using the training and the holdout sets
+#| fig.width: 10
+#| fig.height: 3
+#| out.width: 100%
+ggplot(all_metrics, aes(x = .estimate, y = model, color = dataset)) +
+  geom_point() +
+  facet_wrap(~ .metric, scale = "free_x")
+```
+
+@tbl-metrics-table and Figure @fig-metrics-graph summarize the performance of the models. The ROC AUC values are similar for all three models and clearly different from the reference null-model. The ROC AUC of the QDA model is slightly larger than the other two models. This confirms our interpretation of the ROC curves in @fig-roc-curves.
+Based on this result, we would select the QDA model as the best model. Looking at accuracy on the other hand, a different picture emerges. The accuracy of the QDA model is lower than the other two models. This indicates that the default threshold value of 0.5 is insufficient for the QDA model.
+
+
+## Understanding the difference between the models
+In the previous section, we've seen that based on ROC AUC, we would select the QDA model as the best model. However, based on accuracy, we would discard it due to the very low accuracy. How can this be? @fig-comparison-graph tries to analyze the difference between the models.
+```{r fig-comparison-graph}
+#| fig.cap: Distribution of the predicted probability for the high (blue) and low (red)
+#|          quality classes for the three classification models
+#| fig.alt: Distribution of the predicted probability for the high (blue) and low (red)
+#|          quality classes for the three classification models
+#| fig.width: 12
+#| fig.height: 4
+#| out.width: 100%
+distribution_graph <- function(model, data, model_name) {
+  predictions <- model |>
+    augment(data)
+  g <- ggplot(predictions, aes(x = .pred_high, color = quality)) +
+    geom_density(bw = 0.07) +
+    labs(x = "p(high)", title = model_name) +
+    theme(legend.position = "none")
+  return(g)
+}
+g1 <- distribution_graph(logreg_model, wine_holdout,
+  "Logistic regression")
+g2 <- distribution_graph(lda_model, wine_holdout, "LDA")
+g3 <- distribution_graph(qda_model, wine_holdout, "QDA")
+g1 + g2 + g3
+```
+The graph shows the distribution of the predicted probability for the high and low quality classes. The distribution curves for the logistic regression and the LDA models are similar. QDA, however, looks different. In particular, the predicted probabilities for the high class are shifted to larger values. This will lead to a different optimal threshold value.
+
+## Tuning the threshold
+We can scan the threshold values to find the optimal threshold for each model using `probably::threshold_perf` to calculate metrics at various probability thresholds
+```{r}
+prediction <- logreg_model |> augment(wine_holdout)
+probably::threshold_perf(prediction, quality, .pred_high,
+  thresholds = seq(0.05, 0.95, 0.05), event_level = "first",
+  metrics = metric_set(accuracy)) |>
+  head(5)
+```
+
+```{r fig-threshold-scan}
+#| fig.cap: Accuracy as a function of threshold for the three classification models
+#| fig.alt: Accuracy as a function of threshold for the three classification models
+#| fig.width: 12
+#| fig.height: 4
+#| out.width: 100%
+threshold_scan <- function(model, data, model_name) {
+  threshold_data <- model |>
+    augment(data) |>
+    probably::threshold_perf(quality, .pred_high,
+      thresholds = seq(0.05, 0.95, 0.01), event_level = "first",
+      metrics = metric_set(accuracy))
+  opt_threshold <- threshold_data |>
+    arrange(-.estimate) |>
+    first()
+  g <- ggplot(threshold_data, aes(x = .threshold, y = .estimate)) +
+    geom_line() +
+    geom_point(data = opt_threshold, color = "red", size = 2) +
+    labs(title = model_name, x = "Threshold", y = "Accuracy") +
+    coord_cartesian(ylim = c(0.6, 0.9))
+  return(list(
+    graph = g,
+    threshold = opt_threshold |>
+      pull(.threshold)
+  ))
+}
+g1 <- threshold_scan(logreg_model, wine_holdout, "Logistic regression")
+g2 <- threshold_scan(lda_model, wine_holdout, "LDA")
+g3 <- threshold_scan(qda_model, wine_holdout, "QDA")
+
+logreg_threshold <- g1$threshold
+lda_threshold <- g2$threshold
+qda_threshold <- g3$threshold
+
+g1$graph + g2$graph + g3$graph
+```
+
+@fig-threshold-scan shows the accuracy as a function of the threshold for the three classification models. The optimal thresholds for logistic regression and LDA models are somewhere between 0.35 and 0.65. The default threshold of 0.5 is within this range. The curve for QDA is different. The optimal threshold is above 0.65. The default threshold of 0.5 is not in the optimal region.
+
+```{r}
+predict_at_threshold <- function(model, data, threshold) {
+  return(
+    model |>
+      augment(data) |>
+      mutate(.pred_class = make_two_class_pred(.pred_high,
+          c("high", "low"), threshold = threshold)
+      )
+  )
+}
+
+calculate_metrics_at_threshold <- function(model, train, holdout,
+  model_name, threshold) {
+  df <- bind_rows(
+    # Accuracy of training set
+    bind_cols(
+      model = model_name, dataset = "train", threshold = threshold,
+      metrics(predict_at_threshold(model, train, threshold),
+        truth = quality, estimate = .pred_class),
+    ),
+    # AUC of ROC curve of training set
+    bind_cols(
+      model = model_name, dataset = "train", threshold = threshold,
+      roc_auc(model |> augment(train), quality, .pred_high,
+        event_level = "first"),
+    ),
+    # Accuracy of holdout set
+    bind_cols(
+      model = model_name, dataset = "holdout", threshold = threshold,
+      metrics(predict_at_threshold(model, holdout, threshold),
+        truth = quality, estimate = .pred_class),
+    ),
+    # AUC of ROC curve of holdout set
+    bind_cols(
+      model = model_name, dataset = "holdout", threshold = threshold,
+      roc_auc(model |> augment(holdout), quality, .pred_high,
+        event_level = "first"),
+    ),
+  )
+  return(df)
+}
+
+metrics_at_threshold <- bind_rows(
+  calculate_metrics_at_threshold(logreg_model,
+    wine_train, wine_holdout, "Logistic regression",
+    logreg_threshold),
+  calculate_metrics_at_threshold(lda_model,
+    wine_train, wine_holdout, "LDA", lda_threshold),
+  calculate_metrics_at_threshold(qda_model,
+    wine_train, wine_holdout, "QDA", qda_threshold),
+) |> arrange(dataset)
+```
+```{r tbl-model-evaluation}
+#| tbl-cap: Metrics for the classification models determined using
+#|          the training and the holdout sets with optimized thresholds.
+metrics_table(metrics_at_threshold)
+```
+With the optimized threshold, the metrics for QDA are in the same range as for the other models.
+
+```{r}
+predictions_logreg <- predict_at_threshold(logreg_model, wine_holdout,
+  logreg_threshold)
+predictions_qda <- predict_at_threshold(qda_model, wine_holdout,
+  qda_threshold)
+predictions_qda_05 <- predict_at_threshold(qda_model, wine_holdout, 0.5)
+
+conf_mat(predictions_logreg, truth = quality, estimate = .pred_class)
+conf_mat(predictions_qda, truth = quality, estimate = .pred_class)
+conf_mat(predictions_qda_05, truth = quality, estimate = .pred_class)
+```
+
+Is accuracy a good metric to tune the threshold?
+
+
+::::{.callout-note}
+The optimal threshold depends on the metric used to evaluate the model. In this case, we used accuracy. However, if we had used a different metric, e.g. F1 score, the optimal threshold would be different. It is important to choose the metric that is most relevant for the use case when tuning the threshold.
+
+See the [threshold tuning example](https://gedeck.github.io/machine-learning-with-tidymodels/src/702-example-threshold.html) in our online material.
+::::
+
+
+
+## Appendix: Using a workflow
+As in the previous module, we can also define the models using a workflow. The required changes only affect the model specification and fitting. Everything else, data preparation, EDA, and evaluation remains the same. 
+
+There is one subtle difference between directly fitting the model and fitting a workflow. When fitting a model directly, the fit function of the engine is called directly with the formula. When we use a workflow, the fit function is called not with a formula and the full dataframe. Instead it is called with a dataframe of the predictors and a vector of the outcome. This will make a lot more sense when we use the full power of workflows. For now it means that the following recipe won't work.
+```{r}
+wine_recipe <- recipe(formula, data = wine_train)
+```
+This would pass the categorical `type` variable unchanged to the engine which in the case of the null model, will lead to an error. We need to add a preprocessing step and convert the `type` variable into numeric indicators (0 and 1) using `step_dummy`.
+
+```{r}
+# Define the recipe
+wine_recipe <- recipe(formula, data = wine_train) |>
+  step_dummy(all_nominal_predictors()) # <1>
+
+# Define model specifications
+baseline_spec <- null_model(mode = "classification")
+logreg_spec <- logistic_reg(mode = "classification")
+lda_spec <- discrim_linear(mode = "classification")
+qda_spec <- discrim_quad(mode = "classification")
+
+# Workflows = recipe + model spec
+baseline_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(baseline_spec)
+
+logreg_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(logreg_spec)
+
+lda_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(lda_spec)
+
+qda_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(qda_spec)
+
+# Fit workflows
+baseline_fit <- baseline_wf |> fit(wine_train)
+logreg_fit <- logreg_wf |> fit(wine_train)
+lda_fit <- lda_wf |> fit(wine_train)
+qda_fit <- qda_wf |> fit(wine_train)
+```
+1. The `step_dummy` function converts **all nominal predictors** into dummy variables. In our case, it will convert the `type` variable into one dummy variables (`type_white`) that is 1 for white wine and 0 for red wine. The `all_nominal_predictors()` selector is used to select all nominal predictors in the dataset. If we had more nominal predictors, they would also be converted into dummy variables.
+
+
+## Code {-}
+The code of this chapter is summarized here.
+```{r show-code, ref.label=knitr::all_labels()}
+#| class.source: "codesummary"
+#| code-fold: true
+#| code-summary: "Show the code"
+#| echo: TRUE
+#| eval: FALSE
+```
