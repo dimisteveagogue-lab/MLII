@@ -1,0 +1,459 @@
+---
+title: "Module 4 Homework"
+author: "Dimitri Steve AGOGUE"
+date: today 
+format: 
+  html: default
+  typst:
+    margin: 
+      x: 1in
+      y: 1in
+    include-in-header:
+      text: |
+        #show link: set text(fill: blue)
+editor: visual
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+```{r set-parallel-processing}
+#| cache: false
+library(future)
+plan(multisession, workers = parallel::detectCores(logical = FALSE))
+```
+
+
+```{r libraries}
+#| message: false
+#| warning: false 
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(patchwork)
+library(probably)
+```
+<!--
+::: {.callout-note}
+This module introduced cross-validation and bootstrapping as methods to estimate model performance. The homework assignment will give you the opportunity to apply these methods to two datasets. In assignment (1), you will use cross-validation to compare logistic regression, LDA, and QDA classification models. Assignment (2) uses bootstrap to estimate confidence intervals for the mean absolute error and root mean squared error of a linear regression model.
+
+Use _Tidyverse_ and _Tidymodels_ packages for the assignments.
+
+You can download the [Quarto Markdown file](https://gedeck.github.io/DS-6030/homework/templates/module-4.qmd) and use it as a basis for your solution.
+
+As you will find out, the knitting times for this assignment will be longer than in previous homework. To speed up the knitting process, use caching and parallel processing. You can find more information about [caching](https://gedeck.github.io/machine-learning-with-tidymodels/src/904-appendix-technical-details.html#sec-appendix-caching) and [parallel processing](https://gedeck.github.io/machine-learning-with-tidymodels/src/904-appendix-technical-details.html#sec-appendix-parallel) in the online material.
+:::
+
+::: {.callout-warning}
+## LLM use
+You may use an LLM (ChatGPT, Claude, Copilot, etc.) as an assistant on this assignment for example to clarify concepts, debug an error, or review your prose. Your use must stay within the guidelines of the course syllabus. In particular:
+
+1. **Write in your own words.** The syllabus considers it cheating to directly copy someone else's text word for word, or to copy text from ChatGPT or other LLMs. Any explanation or discussion you submit must be written in your own words.
+2. **Do not have the LLM write the assignment for you.** The LLM must not be used to write the full code and text of the assignment. Use it to support and check your own work, not to replace it.
+3. **Verify anything you keep.** LLMs frequently make small but plausible-sounding errors (wrong variable names, made-up `tidymodels` functions, wrong claims about dataset properties). Check anything you keep against the course material or the actual data.
+:::
+-->
+
+## 1. Diabetes dataset (11 points) {-}
+The Diabetes Health Indicators Dataset contains healthcare statistics and lifestyle survey information about people in general along with their diagnosis of diabetes. The 35 features consist of some demographics, lab test results, and answers to survey questions for each patient. The target variable for classification is whether a patient has diabetes, is pre-diabetic, or healthy. For this study, the target variable was converted to a binary variable with 1 for diabetes or pre-diabetic and 0 for healthy. Information about the dataset can be found [in the data dictionary](https://gedeck.github.io/DS-6030/datasets/diabetes.html).
+
+**For this exercise use caching and parallel processing to speed up your computations.**
+
+(A) Data loading and preprocessing:
+
+**(1.1)** Load the diabetes dataset[(diabetes_binary_5050split_health_indicators_BRFSS2015.csv.gz dataset)](https://gedeck.github.io/DS-6030/datasets/diabetes/diabetes_binary_5050split_health_indicators_BRFSS2015.csv.gz). Convert the `Diabetes_binary` to a factor with labels _Healthy_ and _Diabetes_. Convert all other variables that only contain values of 0 and 1 to factors. (1 point - coding)
+
+
+```{r data-load}
+url <- paste0("https://gedeck.github.io/DS-6030/datasets/diabetes/diabetes_binary_5050split_health_indicators_BRFSS2015.csv.gz")
+diabetes <- read_csv(url)
+
+n_missing = sum(is.na(diabetes))
+n_missing  # No missing values detected in the database 
+#glimpse(diabetes)
+
+```
+
+```{r facto-variables}
+diabetes <- diabetes |>
+  mutate(
+    Diabetes_binary = factor(Diabetes_binary, levels = c(1, 0), labels = c("Diabetes", "Healthy")),
+    HighBP = factor( HighBP, levels = c(0, 1), labels = c("no", "yes")),
+    HighChol = factor(HighChol, levels = c(0, 1), labels = c("no", "yes")),
+    CholCheck = factor(CholCheck, levels = c(0, 1), labels = c("no", "yes")),
+    Smoker = factor(Smoker, levels = c(0, 1), labels = c("no", "yes")),
+    Stroke = factor(Stroke, levels = c(0, 1), labels = c("no", "yes")),
+    HeartDiseaseorAttack = factor(HeartDiseaseorAttack, levels = c(0, 1), labels = c("no", "yes")),
+    PhysActivity = factor(PhysActivity, levels = c(0, 1), labels = c("no", "yes")),
+    Fruits = factor(Fruits, levels = c(0, 1), labels = c("no", "yes")),
+    Veggies = factor(Veggies, levels = c(0, 1), labels = c("no", "yes")),
+    HvyAlcoholConsump = factor(HvyAlcoholConsump, levels = c(0, 1), labels = c("no", "yes")),
+    AnyHealthcare = factor(AnyHealthcare, levels = c(0, 1), labels = c("no", "yes")),
+    NoDocbcCost = factor(NoDocbcCost, levels = c(0, 1), labels = c("no", "yes")),
+    DiffWalk = factor(DiffWalk, levels = c(0, 1), labels = c("no", "yes")),
+    Sex = factor(Sex, levels = c(0, 1), labels = c("female", "male")),
+  )
+#glimpse(diabetes)
+```
+
+**(1.2)** Split the data into a training and test set using a 50/50 split. Use the `set.seed()` function to ensure reproducibility. (1 point - coding)
+
+```{r half-split}
+set.seed(23)
+half_split <- initial_split(diabetes, prop = 0.5, strata = Diabetes_binary)
+diabetes_train <- training(half_split)
+diabetes_test <- testing(half_split)
+
+
+```
+
+```{r}
+#| echo: false
+#| results: hide 
+diabetes_train |>
+  count(Diabetes_binary)|>
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+#| echo: false
+#| results: hide  
+diabetes_test |>
+  count(Diabetes_binary)|>
+  mutate(prop = n/sum(n))
+```
+
+(B) Model training:
+
+**(1.3)** Build a logistic regression model to predict `Diabetes_binary` using all other variables as predictors. Use the training set to fit the model using 10-fold cross-validation. Report the cross-validation accuracy and ROC-AUC of the model. (see [Machine learning with tidymodels: Model validation using cross-validation](https://gedeck.github.io/machine-learning-with-tidymodels/src/402-model-validation-2.html#model-validation-using-cross-validation)) (2 points - coding)
+
+```{r logistic-model-pipe}
+# Model formula
+formula <- Diabetes_binary ~ HighBP + HighChol + CholCheck + BMI + Smoker + Stroke + 
+  HeartDiseaseorAttack + PhysActivity + Fruits + Veggies + HvyAlcoholConsump + Income+
+  AnyHealthcare + NoDocbcCost + GenHlth + MentHlth + PhysHlth + DiffWalk + Sex + Age + Education
+
+# Model recipe
+diabetes_recipe <- recipe(formula, data = diabetes_train)
+
+# Model specification 
+logreg_spec <- logistic_reg(mode = "classification", engine = "glm")
+
+# Model workflow 
+logreg_wf <- workflow() |>
+  add_recipe(diabetes_recipe)|>
+  add_model(logreg_spec)
+
+# Cross-validation setup 
+set.seed(9)
+resamples <- vfold_cv(diabetes_train, v = 10, strata = Diabetes_binary)
+custom_metrics <- metric_set(accuracy, roc_auc)
+cv_control <- control_resamples(save_pred = TRUE)
+
+
+# Cross-validation emplementation
+logreg_cv <- fit_resamples(logreg_wf, resamples, metrics = custom_metrics, control = cv_control)
+
+```
+
+```{r logreg-cv-metrics}
+logreg_cv_metrics <- collect_metrics(logreg_cv)
+
+logreg_cv_metrics |> 
+  dplyr::select(.metric, mean, std_err) |>
+  mutate(
+    Metric = recode(
+      .metric,
+      accuracy = "Accuracy",
+      roc_auc = "ROC-AUC"
+    ),
+    `Mean estimate` = mean, 
+    `Std.error` = std_err
+  ) |>
+    dplyr::select(Metric, `Mean estimate`, `Std.error`)|>
+    knitr::kable(
+      caption = "Logistic Regression 10-fold Cross-Validation performance",
+      digits = 3,
+      align = c("l", "r", "r")
+    )
+```
+
+As shown in the above table, the Cross-validation Accuracy and ROC-AUC are respectively **0.749** and **0.826**.
+
+
+**(1.4)** Use the approach from **(1.3)** to build LDA and QDA models. Report the cross-validation accuracy and ROC-AUC of each model. (4 points - coding)
+
+```{r lda-qda-model-pipe}
+# Model specification
+lda_spec <- discrim_linear(mode = "classification", engine = "MASS")
+qda_spec <- discrim_quad(mode = "classification", engine = "MASS")
+
+# Model workflow
+lda_wf <- workflow()|>
+  add_recipe(diabetes_recipe)|>
+  add_model(lda_spec)
+
+qda_wf <- workflow()|>
+  add_recipe(diabetes_recipe)|>
+  add_model(qda_spec)
+
+# Cross-Validation implementation
+lda_cv <- fit_resamples(lda_wf, resamples, metrics = custom_metrics, control = cv_control)
+qda_cv <- fit_resamples(qda_wf, resamples, metrics = custom_metrics, control = cv_control)
+
+```
+
+```{r lda-qda-cv-metrics}
+lda_qda_cv_metrics <- bind_rows(
+  collect_metrics(lda_cv)|>
+    mutate(model = "LDA"),
+  collect_metrics(qda_cv)|>
+    mutate(model = "QDA")
+)
+ lda_qda_cv_metrics |>
+  dplyr::select(model, .metric, mean)|>
+  pivot_wider(names_from = .metric, values_from = mean)|>
+  rename(
+    Model = model, 
+    Accuracy = accuracy, 
+    `ROC-AUC` = roc_auc
+  )|>
+    knitr::kable(
+      caption = "LDA and QDA Cross-Validation Performance Metrics",
+      digits = 3,
+      align = c("l", "r", "r")
+    )
+```
+
+The LDA model has an accuracy of 0.749 and a ROC-AUC of 0.825 whereas these metrics are respectively 0.727 and 0.782 for the QDA model. The LDA displays a better perfomance, especially with the ROC-AUC. 
+
+
+(C) Cross-validation and test set performance:
+
+**(1.5)** Create a plot that compares the ROC curves of the three models from **(1.3)** and **(1.4)**. The ROC curve should be based on the predictions from cross-validation.
+
+```{r roc-curves}
+#| fig.cap: Cross-validation ROC curves for Logistic regression, LDA, and QDA
+#| fig.alt: ROC curves comparing Logistic regression, LDA, and QDA using out-of-fold cross-validation predictions
+#| fig.width: 6
+#| fig.height: 4
+
+df <- bind_rows(
+  collect_predictions(logreg_cv)|>
+    mutate(model = "Logistic regression"),
+  collect_predictions(lda_cv)|>
+    mutate(model = "LDA"),
+  collect_predictions(qda_cv)|>
+    mutate(model = "QDA")
+)
+
+df|>
+  group_by(model)|>
+  roc_curve(truth = Diabetes_binary, .pred_Diabetes, event_level = "first")|>
+  autoplot()
+```
+
+*How do the models compare? Which model would you choose for prediction? (1 point - coding/discussion)*
+
+The plot shows that the QDA model performs worse than both LDA and logistic regression, whose performances are very similar. This pattern is in agreement with the previous model metrics, where LDA and logistic regression achieved the same accuracy of **0.749** and nearly identical ROC-AUC values of **0.825** and **0.826**, respectively. I would choose the logistic regression over LDA in this context, because it demonstrates a marginally better performance, while remaining simpler and more interpretable. 
+
+**(1.6)** After fitting the three models using the full training set, estimate the performance metrics on the test set. Report the accuracy and ROC-AUC of each model. How do the models compare? Do you see a difference compared to the cross-validation results? (1 point - coding/discussion)
+
+```{r tes-set-performance}
+# Fitting all models
+logreg <- fit(logreg_wf, data = diabetes_train)
+lda <- fit(lda_wf, data = diabetes_train)
+qda <- fit(qda_wf, data = diabetes_train)
+
+# Predictions on test set
+pred_logreg <- augment(logreg, diabetes_test)
+pred_lda <- augment(lda, diabetes_test)
+pred_qda <- augment(qda, diabetes_test)
+
+# Performance Metrics 
+test_metrics <- bind_rows(
+  pred_logreg |>
+    custom_metrics(
+      truth = Diabetes_binary, 
+      estimate = .pred_class, .pred_Diabetes, event_level = "first"
+    ) |>
+    mutate(model = "Logistic Regression"),
+
+  pred_lda |>
+    custom_metrics(
+      truth = Diabetes_binary, 
+      estimate = .pred_class, .pred_Diabetes, event_level = "first"
+    ) |>
+      mutate( model = "LDA"),
+  
+  pred_qda |>
+    custom_metrics(
+      truth = Diabetes_binary, 
+      estimate = .pred_class, .pred_Diabetes, event_level = "first"
+    ) |>
+      mutate(model = "QDA")
+ 
+)
+
+test_metrics |>
+  dplyr::select(model, .metric, .estimate)|>
+  pivot_wider( names_from = .metric, values_from = .estimate)|>
+  rename(
+    Model = model, 
+    Accuracy = accuracy, 
+    `ROC-AUC` = roc_auc
+  )|>
+    knitr::kable(
+      caption = "Test Performance Metrics",
+      digits = 3,
+      align = c("l", "r", "r")
+    )
+
+```
+
+As shown on the table above, QDA performs worse than Logistic regression and LDA, whose performances remains yet again very close to each other. This is consistent with the pattern observed in the Cross-validation results. The main difference being that the test set metrics for Logistic regression and the LDA decreased slightly, whereas QDA's metrics increase slightly. Overall, the test-set results do not seem to meaningfully change the model comparison.
+
+
+**(1.7)** Ask an LLM: "I'm running cross-validation on a dataset with 71000 rows. Should I use 5-fold, 10-fold, or leave-one-out cross-validation?" without telling it any other details about the problem. Paste the LLM's response and then evaluate the answer:
+
+```{text}
+#Gemini Response:
+For a dataset with 71,000 rows, 10-fold or 5-fold cross-validation is the ideal choice, while Leave-One-Out Cross-Validation (LOOCV) should be strictly avoided. LOOCV would require training your model 71,000 times, which is computationally expensive and can suffer from high variance due to heavily overlapping training sets.
+
+Between the K-fold options, 10-fold CV is the industry standard because it utilizes 90% of the data for training in each iteration, offering low bias and an excellent empirical balance for performance estimation. However, if your model takes a long time to train per epoch, 5-fold CV is a fantastic alternative that cuts your computation time in half; with 71,000 rows, the 80% training split still provides more than enough data for most algorithms to learn effectively.
+```
+
+- Does the LLM consider sample size, computational cost, and the bias-variance tradeoff specifically? Or does it default to "10 is standard"?
+- What information about your problem (computational budget, target variance of the estimate, dataset structure) would be necessary to actually answer this question?
+(1 point - discussion)
+
+The LLM gives a reasonable general recommendation against LOOCV and mentions computation and bias-variance. But this question cannot truly be answered without some knowledge about the model cost, performance stability, class balance, dataset dependence structure, and how precise the estimate needs to be.
+
+
+## 2. Estimate model performance using bootstrap (7 points) {-}
+**(2.1)** Use the `mtcars` dataset from [Machine learning with tidymodels: The mtcars dataset](https://gedeck.github.io/machine-learning-with-tidymodels/src/201-regression-models-1.html#the-mtcars-dataset) to estimate the mean absolute error (MAE) and root mean squared error (RMSE) of the linear regression model for the prediction of `mpg` using bootstrap. Use 1000 bootstrap samples to refit the model and collect the performance metrics. Report the mean and standard deviation of the two metrics. (see [Machine learning with tidymodels: Model validation using bootstrapping](https://gedeck.github.io/machine-learning-with-tidymodels/src/402-model-validation-2.html#model-validation-using-bootstrapping)) (3 points - coding)
+
+```{r bootstrap-mae-rmse}
+#| message: false
+#| warning: false 
+## Loading and preprocessing the data
+mtcars <- datasets::mtcars |>
+  as_tibble(rownames = "cars") |>
+  mutate(
+    vs = factor(vs, labels = c("V-shaped", "straight")),
+    am = factor(am, labels = c("automatic", "manual"))
+  )
+#mtcars
+
+## Setting up bootstrap
+set.seed(29)
+resamples_2 <- rsample::bootstraps(mtcars, times = 1000)
+reg_metrics <- metric_set(mae, rmse)
+
+## Defining model 
+formula_2 <- mpg ~ cyl + disp + hp + drat + wt + qsec + vs + am + gear + carb
+
+linear_model <- linear_reg()|>
+  set_engine("lm")
+
+linear_model_wf <- workflow()|>
+  add_model(linear_model)|>
+  add_formula(formula_2)
+
+
+boot_results <- fit_resamples(
+  linear_model_wf, resamples = resamples_2, metrics = reg_metrics
+)
+
+## Performance metrics
+boot_metrics <- boot_results|>
+  collect_metrics(summarize = FALSE)|>
+  group_by(.metric)|>
+  summarize(
+    mean = mean(.estimate), sd = sd(.estimate)
+  )
+
+boot_metrics|>
+  knitr::kable(
+    caption = "Bootstrap Performance metrics",
+    digits = 3,
+    align = c("l", "r", "r")
+  )
+```
+
+
+
+**(2.2)** Create a plot of the distribution of the performance metrics. Comment on the shape of the distribution. (1 point - coding/discussion)
+
+```{r metrics-plot}
+boot_metric_est <- boot_results |>
+  collect_metrics(summarize = FALSE)
+
+boot_metric_est |>
+  ggplot(aes(x = .estimate)) +
+  geom_histogram(bins = 20, color = "white") +
+  facet_wrap(~ .metric, scales = "free") +
+  labs(
+    x = "Metric estimate",
+    y = "Count",
+    title = "Bootstrap distributions of MAE and RMSE")+
+      theme_minimal()
+
+```
+
+The bootstrap distributions for both MAE and RMSE are right-skewed, with most estimates concentrated near the lower end and a few larger values in the right tail. The RMSE distribution has a more pronounced right tail than the MAE distribution, which can be expected since RMSE gives more weight to larger errors. 
+
+
+**(2.3)** Use the performance metrics calculated for the bootstrap samples to estimate the 95% confidence interval for the mean absolute error (MAE) and root mean squared error (RMSE). Report the confidence intervals. (2 points - coding/discussion)
+
+```{r bootstrap-confin}
+boot_confin <- boot_metric_est |>
+  group_by(.metric)|>
+  summarize(
+    lower = quantile(.estimate, 0.025), 
+    upper = quantile(.estimate, 0.975))
+
+boot_confin |>
+  mutate(
+    Metric = recode(
+      .metric, 
+      mae = "MAE",
+      rmse = "RMSE"
+    )
+  )|>
+    dplyr::select(Metric, lower, upper)|>
+    knitr::kable(
+      caption = "Bootstrap 95% Confidence Intervals for MAE and RMSE",
+      digits = 3,
+      align = c("l", "r", "r")
+    )
+```
+
+The 95% bootstrap confidence interval for MAE ranges from 1.979 to 7.243, while the interval for RMSE ranges from 2.512 to 9.950. The RMSE interval is wider, which is expected because RMSE penalizes larger errors more strongly than MAE. 
+
+
+**(2.4)** Paste your bootstrap 95% CI for the RMSE from **(2.3)** into an LLM and ask: "What does this confidence interval mean? If I deploy this model, can I expect any individual prediction's error to fall in this range?"
+
+Paste the LLM's response and then evaluate the answer:
+```text
+#Gemini response: 
+No, you cannot expect an individual prediction’s error to fall within these ranges. These confidence intervals were built using bootstrapping, which means they estimate the uncertainty of your overall model performance metrics (its macro-level report card), not the variability of individual predictions. In other words, you can be 95% confident that the true average error of your model across the entire population lies between 1.979 and 7.243 for MAE, but a single prediction's error is subject to the full noise and variance of the data and can easily fall far outside these bounds.
+
+To determine the range where an individual prediction's error is likely to land, you need a prediction interval or an error distribution rather than a confidence interval. You can find this by plotting a histogram of your absolute residuals ($|y - \hat{y}|$) on a test set and calculating a specific threshold, such as the 95th percentile. For instance, if the 95th percentile of your absolute errors is 15.2, you could confidently state that any single new prediction's error will be less than 15.2 about 95% of the time.
+```
+
+- Does it correctly distinguish between a CI for the expected RMSE (averaged over many predictions) and a CI for individual prediction errors?
+- Does it correctly tie the CI back to the bootstrap procedure (resampling rows from the training data), or treat it as a generic frequentist CI?
+- Rewrite any incorrect or sloppy interpretation in your own words.
+
+(1 point - discussion)
+
+Gemini correctly distinguishes between a bootstrap confidence interval for model performance and the error of an individual prediction. The intervals for MAE and RMSE summarize uncertainty in the model’s overall expected performance across bootstrap resamples; they do not indicate whether or not each individual prediction error will fall inside those bounds. Its response also correctly notes that individual prediction uncertainty would require a prediction interval or an analysis of the residual/error distribution. However, the wording could be more precise: the RMSE interval is not a confidence interval for an “average error,” but for the RMSE performance metric. Also, a residual percentile would only be an approximate guide for future individual errors if future observations are similar to the data used to estimate it.
+
+## LLM use
+```text
+ChatGPT was used in this homework for prose review. 
+```

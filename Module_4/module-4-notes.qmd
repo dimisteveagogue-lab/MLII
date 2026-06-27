@@ -1,0 +1,501 @@
+```{r setup}
+#| include: FALSE
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+
+## Wine quality dataset
+The data are the results of a chemical analysis of wines grown in the same region in the north of Portugal. The goal is to model wine quality based on physicochemical tests (see [Cortez et al., 2009](https://doi.org/10.1016/j.dss.2009.05.016) and [download the datasets](https://archive.ics.uci.edu/dataset/186/wine+quality))
+
+For this exercise, we convert the quality scale into a binary outcome
+
+We will explore the following models using **cross-validation**:
+
+- Logistic regression
+- LDA
+- QDA
+
+
+Load all required packages
+```{r load-packages}
+#| message: FALSE
+library(tidymodels)
+library(tidyverse)
+library(discrim)
+library(patchwork)
+library(probably)
+```
+
+
+We start a cluster for faster calculations. This will reduce the time required for cross-validation as individual folds can be processed at the same time.
+```{r setup-parallel}
+#| cache: FALSE
+library(future)
+plan(multisession, workers = parallel::detectCores(logical = FALSE))
+```
+
+
+## Load and preprocess data
+Load the datasets, combine and preprocess. We use the same pre-processing steps as in the last live session.
+```{r}
+#| message: false
+url <- "https://gedeck.github.io/DS-6030/datasets/wine+quality"
+red_file <- paste(url, "winequality-red.csv", sep = "/")
+white_file <- paste(url, "winequality-white.csv", sep = "/")
+wine <- bind_rows(
+  read_delim(red_file, delim = ";") |>
+    mutate(type = "red"),
+  read_delim(white_file, delim = ";") |>
+    mutate(type = "white")
+) |>
+  mutate(
+    type = factor(type, levels = c("red", "white")),
+    quality = ifelse(quality >= 7, "high", "low"),
+    quality = factor(quality, levels = c("high", "low"))
+  ) |>
+  mutate(
+    group = paste(type, quality, sep = "_"),
+    group = factor(group),
+  )
+```
+Note that I create a `group` variable as a combination of type (red/white) and quality (high/low) to ensure that both training and testing sets contain similar distributions of high and low quality red and white wines. I could also have used `quality` as the stratification variable, but I wanted to ensure that both training and testing sets contain both types of wines in equal proportions. Currently, _tidymodels_ does not support stratified sampling for several variables at the same time. We therefore need to create a new variable that combines both `type` and `quality` to achieve this.
+
+
+Split the data for the classification model using a 80/20 split with stratified sampling.
+```{r split-data}
+set.seed(12345)
+
+wine_split <- initial_split(wine, prop = 0.8, strata = group)
+wine_train <- training(wine_split)
+wine_holdout <- testing(wine_split)
+```
+
+
+## Prepare model workflows
+Define the preprocessing steps. Here we normalize all numeric predictors.
+```{r}
+formula <- quality ~ `fixed acidity` + `volatile acidity` +
+  `citric acid` + `residual sugar` + chlorides +
+  `free sulfur dioxide` + `total sulfur dioxide` + density +
+  pH + sulphates + alcohol + type
+
+wine_recipe <- recipe(formula, data = wine_train) |>
+  step_normalize(all_numeric_predictors())
+```
+
+Next we specify the three different model specifications
+```{r}
+logreg_spec <- logistic_reg(mode = "classification", engine = "glm")
+lda_spec <- discrim_linear(mode = "classification", engine = "MASS")
+qda_spec <- discrim_quad(mode = "classification", engine = "MASS")
+```
+
+Combine preprocessing steps and model specifications in workflows
+```{r}
+logreg_wf <- workflow() |>  # <1>
+  add_recipe(wine_recipe) |>  # <2>
+  add_model(logreg_spec)  # <3>
+
+lda_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(lda_spec)
+
+qda_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(qda_spec)
+```
+1. We start by creating an empty workflow using the `workflow()` function.
+2. We add the preprocessing steps defined in the `wine_recipe` to the workflow using the `add_recipe()` function.
+3. Finally, we add the model specification defined in `logreg_spec` to the workflow using the `add_model()` function.
+
+
+## Cross-validation for model selection
+Cross-validation is a useful approach to estimate the performance of a model with a training set. It allows us to assess how well the model generalizes to unseen data by repeatedly splitting the training set into smaller subsets (folds) and training the model on these subsets.
+
+### Setup cross-validation
+
+```{r}
+resamples <- vfold_cv(wine_train, v = 10, strata = type)  # <1>
+custom_metrics <- metric_set(roc_auc, accuracy)  # <2>
+cv_control <- control_resamples(save_pred = TRUE)  # <3>
+```
+1. By defining the folds using `vfold_cv`, we make sure that we use the same folds for all models. This allows us to compare the performance of different models.
+2. We also define the metrics that we want to calculate using the `metric_set` function.
+3. Finally, we define control parameters `cv_control` so that we can save individual predictions for each fold. The argument `save_pred = TRUE` will save the out-of-fold predictions. We use these later to create ROC curves based on the out-of-fold predictions.
+
+
+### Cross-validation
+```{r}
+logreg_cv <- fit_resamples(logreg_wf, resamples,  # <1>
+  metrics = custom_metrics,  # <2>
+  control = cv_control)  # <3>
+# use the following command if something goes wrong
+# show_notes(.Last.tune.result)
+lda_cv <- fit_resamples(lda_wf, resamples,
+  metrics = custom_metrics, control = cv_control)
+qda_cv <- fit_resamples(qda_wf, resamples,
+  metrics = custom_metrics, control = cv_control)
+```
+1. The function `fit_resamples` fits the model to each fold of the cross-validation and collects the performance metrics on the out-of-fold predictions.
+2. The metrics passed with the `metrics` argument are calculated for each fold.
+3. We want to use the out-of-fold predictions to create ROC curves. That is why we pass `control = cv_control` to the `fit_resamples` function.
+
+### Cross-validation performance metrics
+The function `collect_metrics` combines the performance metrics for all folds and returns a data frame with the mean and standard error of the metrics. We can use this to summarize the performance of the models.
+@tbl-cv-metrics-table summarizes the performance metrics estimated using 10-fold cross-validation.
+```{r tbl-cv-metrics-table}
+cv_metrics <- bind_rows(
+  collect_metrics(logreg_cv) |>
+    mutate(model = "Logistic regression"),
+  collect_metrics(lda_cv) |>
+    mutate(model = "LDA"),
+  collect_metrics(qda_cv) |>
+    mutate(model = "QDA")
+)
+cv_metrics |>
+  dplyr::select(model, .metric, mean) |>
+  pivot_wider(names_from = .metric, values_from = mean) |>
+  knitr::kable(caption = "Cross-validation performance metrics",
+    digits = 3)
+```
+
+
+@fig-cv-metrics-figure is a visualization of the same data
+```{r fig-cv-metrics-figure}
+#| fig.cap: Cross-validation performance metrics
+#| fig.alt: Cross-validation performance metrics
+#| fig.width: 6
+#| fig.height: 3
+#| out.width: 75%
+ggplot(cv_metrics, aes(x = mean, y = model,
+    xmin = mean - std_err, xmax = mean + std_err)) +
+  geom_point() +
+  geom_linerange() +  # <1>
+  facet_wrap(~ .metric)
+```
+1. The `geom_linerange` adds error bars to the plot, which represent the standard error of the mean performance metric across the folds. This gives us an indication of the variability of the performance metric across different folds.
+
+What conclusions can we draw from Table @tbl-cv-metrics-table and Figure @fig-cv-metrics-figure?
+
+### Cross-validation ROC curves
+We've already seen that ROC curves are useful to visualize the overall performance of a classification model. The `collect_predictions` function collects the out-of-fold predictions and combines them into a single tibble in the same format as is returned by the `augment` function. You need to set `save_pred = TRUE` in the control parameters when fitting the resamples to retain this information.
+```{r fig-cv-roc-curves}
+#| fig.cap: ROC curves based on cross-validation predictions
+#| fig.alt: ROC curves based on cross-validation predictions
+#| fig.width: 12
+#| fig.height: 4
+roc_cv_plot <- function(model_cv, model_name) {
+  cv_predictions <- collect_predictions(model_cv)
+  cv_roc <- cv_predictions |>
+    roc_curve(truth = quality, .pred_high, event_level = "first")  # <1>
+
+  g <- autoplot(cv_roc) +  # <2>
+    labs(title = model_name)
+  return(g)
+}
+g1 <- roc_cv_plot(logreg_cv, "Logistic regression")
+g2 <- roc_cv_plot(lda_cv, "LDA")
+g3 <- roc_cv_plot(qda_cv, "QDA")
+g1 + g2 + g3
+```
+1. The `roc_curve` function calculates the information needed to create the ROC curve. It requires the true class labels (here `truth = quality`), the predicted probabilities for the positive class (here `.pred_high`), and the `event_level` argument to specify which level of the factor variable is considered the "positive" class. Make sure that the `event_level` argument is set correctly.
+2. The `roc_curve` information comes with an `autoplot` method that creates a ROC curve plot.
+
+Dislaying the ROC curves individually like in @fig-cv-roc-curves is useful to see the details of each model. However, it is often more informative to overlay the ROC curves of different models in a single plot to compare their performance directly. Here is how to create such an overlay:
+```{r fig-cv-roc-curves-overlay}
+#| fig.cap: Overlay of cross-validation ROC curves (alternative)
+#| fig.alt: Overlay of cross-validation ROC curves (alternative)
+#| fig.width: 5
+#| fig.height: 3
+df <- bind_rows(  # <1>
+  collect_predictions(logreg_cv) |>
+    mutate(model = "Logistic regression"),
+  collect_predictions(lda_cv) |>
+    mutate(model = "LDA"),
+  collect_predictions(qda_cv) |>
+    mutate(model = "QDA")
+)
+
+df |>
+  group_by(model) |>  # <2>
+  roc_curve(truth = quality, .pred_high, event_level = "first") |>  # <3>
+  autoplot()  # <4>
+```
+1. We first combine the out-of-fold predictions for all models into a single data frame adding an unique identifier (`model`) for each model.
+2. The predictions are grouped by the `model` variable` and
+3. the ROC curve information is calculated for each model.
+4. At this step, the ROC information is combined and the `autoplot` function creates the overlay plot.
+
+@fig-cv-roc-curves-overlay shows the resulting graph. The three models have similar ROC curves, with QDA performing slightly better than the other two models.
+
+## Tuning the threshold (`probably::threshold_perf`)
+The ROC curve gives us a good overview of the model performance across all possible thresholds. However, in practice we may to select a specific threshold to make a binary prediction. The default threshold is usually 0.5, but this may not be optimal for our specific problem. We can also use the out-of-fold predictions to explore the effect of the threshold on the performance metrics.
+
+In _tidymodels_, we use the package `probably` to explore the threshold. As we will create the same type of graphs for all three models, we define several functions to look at the effect of threshold selection on performance metrics and the associated confusion matrices. The first function `threshold_graph` calculates the performance metrics for a range of thresholds and creates a graph to visualize the effect of threshold selection on the performance metrics.
+```{r}
+threshold_graph <- function(model_cv, model_name) {
+  performance <- probably::threshold_perf(  # <1>
+    collect_predictions(model_cv),
+    quality, .pred_high,
+    thresholds = seq(0.05, 0.95, 0.01),
+    event_level = "first",
+    metrics = metric_set(f_meas, accuracy, kap))
+
+  max_metrics <- performance |>  # <2>
+    drop_na() |>
+    group_by(.metric) |>
+    filter(.estimate == max(.estimate))
+  thresholds <- max_metrics |>
+    dplyr::select(.metric, .threshold) |>
+    deframe()
+
+  g <- ggplot(performance,  # <3>
+    aes(x = .threshold, y = .estimate, color = .metric,
+      linetype = .metric)) +
+    geom_line() +
+    geom_point(data = max_metrics, color = "black") +
+    labs(title = model_name,
+      x = "Threshold", y = "Metric value") +
+    coord_cartesian(ylim = c(0, 0.825))
+
+  return(list(graph = g, thresholds = thresholds))  # <4>
+}
+```
+1. The `probably::threshold_perf` function uses the out-of-fold predictions to calculate the performance metrics for different thresholds. We need to give the name of the columns that contain the actual class (here `quality`) and the predicted probabilities (here `.pred_high`). Then we provide a sequence of `thresholds` on which to evaluate the metrics (here F-measure, accuracy, and Cohen's kappa). Make sure to set the `event_level` argument correctly to specify which level of the factor variable is considered the "positive" class.
+2. This sequence of commands filters the performance data frame to find the threshold that maximizes each metric and stores the metrics and thresholds. For some thresholds, the F-measure cannot be calculated because the model predicts only one class. In this case, we filter out these values using `drop_na()`.
+3. We prepare, but do not yet display, a graph that shows the performance metrics as a function of the threshold. The points indicate the thresholds that maximize each metric.
+4. The function returns both the graph and the thresholds that maximize each metric.
+
+The second function `visualize_conf_mat` creates a confusion matrix for a given threshold and metric.
+```{r}
+visualize_conf_mat <- function(model_cv, thresholds, metric) {
+  threshold <- thresholds[metric]
+  cm <- collect_predictions(model_cv) |>
+    mutate(
+      .pred_class =
+        make_two_class_pred(.pred_high,  c("high", "low"),  # <1>
+          threshold = threshold),
+    ) |>
+    conf_mat(truth = quality, estimate = .pred_class)  # <2>
+  g <- autoplot(cm, type = "heatmap") +  # <3>
+    labs(title = sprintf("Threshold %.2f (%s)", threshold, metric))
+  return(g)
+}
+```
+1. The `make_two_class_pred` function from the `probably` package creates binary predictions based on the predicted probabilities and the specified threshold.
+2. The `conf_mat` function calculates the confusion matrix based on the true class labels and the predicted classes.
+3. The `autoplot` function creates a heatmap visualization of the confusion matrix.
+
+It can be useful to look at the confusion matrix for a given thresholds. This gives a better understanding how the predictions are distributed. We combine the threshold graph and the confusion matrices calculated at the "optimal" thresholds for each metrics in the `overview_model` function.
+```{r}
+overview_model <- function(model_cv, model_name) {
+  tg <- threshold_graph(model_cv, model_name)
+  g1 <- visualize_conf_mat(model_cv, tg$thresholds, "accuracy")
+  g2 <- visualize_conf_mat(model_cv, tg$thresholds, "f_meas")
+  g3 <- visualize_conf_mat(model_cv, tg$thresholds, "kap")
+  return(tg$graph + (g1 / g2 / g3))
+}
+```
+
+With all these functions defined, we can now visualize the effect of threshold selection on the performance metrics and the associated confusion matrices for all three models.
+```{r fig-model-threshold}
+#| fig.cap: Metrics as a function of model performance
+#| fig.alt: Metrics as a function of model performance
+#| fig.width: 8
+#| fig.height: 12
+#| out.width: 80%
+#| warning: FALSE
+g1 <- overview_model(logreg_cv, "Logistic regression")
+g2 <- overview_model(lda_cv, "LDA")
+g3 <- overview_model(qda_cv, "QDA")
+
+g1 / g2 / g3
+```
+We can see in @fig-model-threshold that tuning based on accuracy leads to predictions that are dominated by the majority class. Accuracy is not a good metric for imbalanced datasets. The F-measure is a better metric to use here, as it balances precision and recall.
+
+\newpage
+## Change the perspective
+How would we use this type of model in practice to make decisions? Instead of saying that an individual wine has high or low quality, we would want to prioritize a subset of wines and maximize profit. We therefore shift our focus to the score and no longer consider binary classification.
+
+A great way of looking at this are **cumulative gains curves**. In cumulative gains curves, we sort the data points by the score for the positive class and then assign a gain. The function `get_gains_data` calculates the expected gain for each data point and the cumulative gain for all data points sorted by the score. 
+```{r}
+logreg_fit <- logreg_wf |> fit(wine_train)
+lda_fit <- lda_wf |> fit(wine_train)
+qda_fit <- qda_wf |> fit(wine_train)
+
+get_gains_data <- function(model, model_name, data,
+  gain_low, gain_high) {
+  df <- augment(model, data) |>
+    mutate(
+      gain = ifelse(quality == "high", gain_high, gain_low)  # <1>
+    ) |>
+    arrange(-.pred_high) |>  # <2>
+    mutate(
+      cumulative_profit = cumsum(gain),  # <3>
+      number = seq(1, dim(data)[1]),
+      model = model_name,
+    )
+  return(df)
+}
+```
+1. Assigns the gain we will achieve based on the actual class (here `quality`) of each data point.
+2. Sort the data points by the score for the positive class (here `.pred_high`). This reflects the order in which we would prioritize the wines based on the model's predictions.
+3. Calculate the cumulative sum of the gain for all data points sorted by the score. 
+
+The function `gains_perfect_model` calculates the cumulative gain for a perfect model, which serves as a benchmark for our models.
+```{r}
+gains_perfect_model <- function(data, gain_low, gain_high) {
+  df <- data |>
+    mutate(
+      gain = ifelse(quality == "high", gain_high, gain_low),
+    ) |>
+    arrange(-gain) |>  # <1>
+    mutate(
+      cumulative_profit = cumsum(gain),
+      number = seq(1, dim(data)[1]),
+      model = "Perfect model",
+    )
+  return(df)
+}
+```
+1. In a perfect model, we would rank all high-quality wines first, followed by all low-quality wines. This is achieved by sorting the data points by the gain.
+
+To calculate a gains curve, we need to define the profit/cost for each class. Here, we assume that we make a profit for a high-quality wine (`gain_high`) and incur a loss for a low-quality wine (`gain_low`).
+```{r}
+gain_low <- -10
+gain_high <- 100
+
+perfect_model <- gains_perfect_model(wine_holdout, gain_low,
+  gain_high)
+
+gains_data <- bind_rows(
+  get_gains_data(logreg_fit, "Logistic regression", wine_holdout,
+    gain_low, gain_high),
+  get_gains_data(lda_fit, "LDA", wine_holdout,
+    gain_low, gain_high),
+  get_gains_data(qda_fit, "QDA", wine_holdout,
+    gain_low, gain_high),
+)
+random_model <- bind_rows(
+  perfect_model |> head(1),
+  perfect_model |> tail(1),
+)
+```
+We can now visualize the expected cumulative profit for all three models and compare it to the perfect and a random model
+```{r fig-gains-curves}
+#| fig.cap: Overlay of gains curves
+#| fig.alt: Overlay of gains curves
+#| fig.width: 8
+#| fig.height: 3
+perfect_line <- geom_line(data = perfect_model,
+  color = "grey", linetype = "solid")
+random_line <- geom_line(data = random_model,
+  color = "darkgrey", linetype = "solid")
+
+g <- ggplot(gains_data,
+  aes(x = number, y = cumulative_profit, color = model,
+    linetype = model)) +
+  perfect_line +
+  random_line
+
+g1 <- g + geom_line(show.legend = FALSE)
+g2 <- g + geom_line() +
+  coord_cartesian(xlim = c(0, 250), ylim = c(0, 10000))
+
+g1 + g2
+```
+@fig-gains-curves shows the gains curves for all three models. The left panel shows the full range, while the right panel zooms in on the initial part of the curve. This is often the most relevant part in practice, as we are usually interested in prioritizing a small subset of items based on a limited budget. The way to look at this graph is to see how much profit we expect to achieve if we prioritize, for example, the top 100 wines based on the model's predictions. In the right graph, we can see that this would lead to an expected profit of around 6250. Compare this to the about 1250 for the random and the 10,000 for the perfect model. This shows that our models are doing a good job at prioritizing.
+
+
+
+## Appendix: Tuning the threshold (`tailor`)
+The `tailor` package provides an alternative approach to tuning the threshold. This section includes material that we have not covered in this module. See it as a reference for the future.
+
+```{r}
+tailor_spec <- tailor() |>  # <1>
+  adjust_probability_threshold(threshold = tune())  # <2>
+
+logreg_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(logreg_spec) |>
+  add_tailor(tailor_spec)  # <1>
+
+lda_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(lda_spec) |>
+  add_tailor(tailor_spec)
+
+qda_wf <- workflow() |>
+  add_recipe(wine_recipe) |>
+  add_model(qda_spec) |>
+  add_tailor(tailor_spec)
+```
+1. The `tailor` package deals with post-processing of model predictions. It is used similarly to the `recipe` (pre-processing) and `parsnip` (model definition) packages.
+2. The `adjust_probability_threshold` function allows us to specify that we want to tune the probability threshold. By setting `threshold = tune()`, we indicate that this is a parameter that we want to optimize during the tuning process.
+
+With the extended workflows, we can now perform tuning of the threshold. Here, we use the `tune_bayes` function:
+```{r}
+#| warning: FALSE
+#| message: FALSE
+parameters <- extract_parameter_set_dials(logreg_wf) |>
+  update(threshold = threshold(range = c(0.1, 0.9)))  # <1>
+
+custom_metrics <- metric_set(f_meas, kap, accuracy)
+
+tune_logreg <- tune_grid(logreg_wf,  # <2>
+  resamples = resamples, metrics = custom_metrics,
+  grid = grid_regular(parameters, levels = 81))
+tune_lda <- tune_grid(lda_wf,
+  resamples = resamples, metrics = custom_metrics,
+  grid = grid_regular(parameters, levels = 81))
+tune_qda <- tune_grid(qda_wf,
+  resamples = resamples, metrics = custom_metrics,
+  grid = grid_regular(parameters, levels = 81))
+```
+1. The `extract_parameter_set_dials` function extracts the parameters from the workflow that can be tuned. Here, this is `threshold`. We define that range of values that we want to explore (0.1 to 0.9).
+2. The `tune_grid` function performs a grid search to find the optimal threshold. We learn more about this in a later module. For now, it is sufficient to know that this function will evaluate different threshold values and find the one that optimizes the specified performance metrics.
+
+```{r fig-threshold-tuning}
+#| fig.cap: Tune threshold as part of the workflow
+#| fig.alt: Tune threshold as part of the workflow
+#| out.width: 100%
+#| fig.align: center
+#| fig.height: 5
+#| fig.width: 9
+g1 <- autoplot(tune_logreg) + labs(title = "Logistic regression")
+g2 <- autoplot(tune_lda) + labs(title = "LDA")
+g3 <- autoplot(tune_qda) + labs(title = "QDA")
+g1 + g2 + g3
+```
+
+```{r tbl-best-metrics-table}
+get_best_metrics <- function(tune_result, model_name) {
+  best <- tune_result |>
+    collect_metrics() |>
+    group_by(.metric) |>
+    filter(mean == max(mean)) |>
+    dplyr::select(threshold, .metric, mean, std_err) |>
+    mutate(model = model_name)
+  return(best)
+}
+bind_rows(
+  get_best_metrics(tune_logreg, "Logistic Regression"),
+  get_best_metrics(tune_lda, "LDA"),
+  get_best_metrics(tune_qda, "QDA")
+) |>
+  knitr::kable(caption = "Best performance metrics for each model",
+    digits = 3)
+```
+
+The results in @fig-threshold-tuning and @tbl-best-metrics-table are comparable to what we saw in @fig-model-threshold.
+
+### Code {-}
+The code of this chapter is summarized here.
+```{r show-code, ref.label=knitr::all_labels()}
+#| class.source: "codesummary"
+#| code-fold: true
+#| code-summary: "Show the code"
+#| echo: TRUE
+#| eval: FALSE
+```

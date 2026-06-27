@@ -14,12 +14,12 @@ format:
 editor: visual
 ---
 
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
   fig.align = "center")
 ```
 
+```{=html}
 <!--
 ::: {.callout-note}
 In this module, we learned about classification models.
@@ -44,6 +44,7 @@ You may use LLMs (ChatGPT, Claude, Copilot, etc.) on this assignment. If you do,
 The grader will spot-check disclosure. Undisclosed LLM use is treated as a citation failure.
 :::
 -->
+```
 
 ```{r}
 #| warning: FALSE
@@ -58,9 +59,7 @@ library(probably) # For threshold performance
 
 ```
 
-
-
-## 1. Differences between LDA and QDA. (5 points) {-}
+## 1. Differences between LDA and QDA. (5 points) {.unnumbered}
 
 **(1.1)** If the Bayes decision boundary is linear, do we expect LDA or QDA to perform better on the training set? On the test set? (1 point - discussion)
 
@@ -70,10 +69,9 @@ On the training set, QDA may perform better because it is more flexible and can 
 
 If the Bayes decision boundary is nonlinear, QDA may perform better on the training set because its greater flexibility allows it to fit more complex patterns. QDA may also perform better on the test set because its quadratic decision boundary can better approximate the true nonlinear boundary. However, this advantage depends on having sufficient training data; with a small sample size, QDA’s higher variance could still hurt test performance.
 
+**(1.3)** In general, as the sample size (n) increases, do we expect the test prediction accuracy of QDA relative to LDA to improve, decline, or be unchanged? Why? (1 point - discussion)
 
-**(1.3)** In general, as the sample size \(n\) increases, do we expect the test prediction accuracy of QDA relative to LDA to improve, decline, or be unchanged? Why? (1 point - discussion)
-
-With increasing sample size \(n\), we generally expect QDA’s test prediction accuracy relative to LDA’s to improve because a sufficiently large dataset helps reduce QDA’s higher variance. So, as \(n\) grows, its weakness becomes less severe, and its flexibility can become more useful. This is especially true if the Bayes decision boundary is nonlinear, because LDA would be misspecified while QDA can better approximate the true boundary. However, if the true boundary is linear, LDA may still perform as well as, or better than QDA, because QDA’s extra flexibility will then not be needed.
+With increasing sample size (n), we generally expect QDA’s test prediction accuracy relative to LDA’s to improve because a sufficiently large dataset helps reduce QDA’s higher variance. So, as (n) grows, its weakness becomes less severe, and its flexibility can become more useful. This is especially true if the Bayes decision boundary is nonlinear, because LDA would be misspecified while QDA can better approximate the true boundary. However, if the true boundary is linear, LDA may still perform as well as, or better than QDA, because QDA’s extra flexibility will then not be needed.
 
 **(1.4)** True or False: Even if the Bayes decision boundary for a given problem is linear, we will probably achieve a superior test error rate using QDA rather than LDA because QDA is flexible enough to model a linear decision boundary. Justify your answer. (1 point - discussion)
 
@@ -81,13 +79,12 @@ False. If the Bayes decision boundary is linear, we would not generally expect Q
 
 **(1.5)** Submit **(1.4)** to an LLM verbatim. Ask for True/False plus justification. Compare with your own answer:
 
-If the LLM agrees with you, evaluate whether its justification appeals to bias-variance tradeoff specifically, or to vaguer "flexibility" language.
-If the LLM disagrees, decide who is right and explain why. (1 point - discussion)
+If the LLM agrees with you, evaluate whether its justification appeals to bias-variance tradeoff specifically, or to vaguer "flexibility" language. If the LLM disagrees, decide who is right and explain why. (1 point - discussion)
 
-I used *ChatGPT* for this section. The LLM answer was in agreement with mine, and it referred to the bias-variance tradeoff in favor of LDA, since LDA is better alligne with a linear Bayes decision boundary. It went further to illustrate QDA's estimate of significantly more parameters leading to potential overfitting of training data in this particular setting. 
+I used *ChatGPT* for this section. The LLM answer was in agreement with mine, and it referred to the bias-variance tradeoff in favor of LDA, since LDA is better alligne with a linear Bayes decision boundary. It went further to illustrate QDA's estimate of significantly more parameters leading to potential overfitting of training data in this particular setting.
 
+## 2. NASA: Asteroid classification (11 points) {.unnumbered}
 
-## 2. NASA: Asteroid classification (11 points) {-}
 The dataset `nasa.csv` contains information about asteroids and if they are considered to be hazardous or not.
 
 (A) Data loading and preprocessing:
@@ -127,7 +124,6 @@ asteroids <- asteroids |>
 
 ```
 
-
 **(2.2)** Split the dataset into a training and test set. Use 80% of the data for training and 20% for testing. Use stratified sampling to ensure that the training and test set have the same proportion of hazardous asteroids. (2 points - coding)
 
 ```{r data-split}
@@ -148,7 +144,7 @@ asteroids_test |>
 
 ```
 
-(B) Model training. Build a classification model with _tidymodels_ using four different methods (null model, logistic regression, LDA, and QDA):
+(B) Model training. Build a classification model with *tidymodels* using four different methods (null model, logistic regression, LDA, and QDA):
 
 **(2.3)** Use the training set to fit the four models. (2 points - coding)
 
@@ -169,7 +165,6 @@ lda_model <- discrim_linear(mode = "classification", engine = "MASS")|>
 qda_model <- discrim_quad(mode = "classification", engine = "MASS")|>
   fit(formula, asteroids_train)
 ```
-
 
 **(2.4)** For each model, determine and plot the ROC curves for both the training and test set. Compare training vs. test ROC for each model --- is there a sign of overfitting? Do you observe any differences between the models? Use `patchwork` to arrange the individual graphs for the four models in a single figure. (1 point - coding/discussion)
 
@@ -212,7 +207,7 @@ p4 <- roc_plot_helper(qda_model, "QDA")
 
 As expected, the null model performs approximately at random on both the training and test sets, with ROC curves close to the diagonal line. The logistic regression, LDA, and QDA models all perform substantially better than the null model. For logistic regression and LDA, the training and test ROC curves are relatively close, suggesting little evidence of overfitting. QDA appears to show a slightly larger separation between the training and test curves, especially in the lower false-positive-rate region, so it may be overfitting slightly more than logistic regression and LDA. Overall, however, the train-test gaps are not severe.
 
-**(2.5)** Create a single plot that overlays the ROC curves of the four models for the test set. Which model separates the two classes best?  (1 point - coding/discussion)
+**(2.5)** Create a single plot that overlays the ROC curves of the four models for the test set. Which model separates the two classes best? (1 point - coding/discussion)
 
 ```{r roc-plot-test}
 #| warning: false
@@ -243,7 +238,7 @@ test_predictions |>
 
 The null model performs worst, with an AUC of 0.500, which indicates no discriminatory ability beyond random classification. The three fitted models perform substantially better than the null model and have very similar test-set ROC curves. LDA has the highest test AUC at 0.802, followed closely by logistic regression at 0.799 and QDA at 0.794. Therefore, LDA separates the two classes best by a small margin, but the difference among the three fitted models is modest.
 
-**(2.6)** For each model, determine the threshold that maximizes the F-measure (`yardstick::f_meas`) using the training set. Why is the F-measure a better metric than accuracy in this case? _Hint_: determine the class proportions. Create plots that show the dependence of the F-measure on the threshold. (2 points - coding/discussion)
+**(2.6)** For each model, determine the threshold that maximizes the F-measure (`yardstick::f_meas`) using the training set. Why is the F-measure a better metric than accuracy in this case? *Hint*: determine the class proportions. Create plots that show the dependence of the F-measure on the threshold. (2 points - coding/discussion)
 
 ```{r f-measure-thresholds}
 #| warning: false
@@ -332,7 +327,6 @@ metrics_at_threshold <- function(model, data, model_name, threshold) {
 }
 ```
 
-
 ```{r test-metrics-at-threshold}
 threshold_tbl <- best_thresholds |>
   select(model, threshold = .threshold)
@@ -381,9 +375,9 @@ This result is consistent with the ROC analysis in **(2.5)**, where LDA also had
 
 **(2.8)** Without giving the LLM access to your data or class proportions, ask: "I'm building a binary classifier. What probability threshold should I use to convert predicted probabilities into class labels?" Paste the LLM's recommendation.
 
-*ChatGPT* was used once more, and the output was largely detailed and lengthy so, below are pasted opening and summary from said output: 
+*ChatGPT* was used once more, and the output was largely detailed and lengthy so, below are pasted opening and summary from said output:
 
-```text
+``` text
 The short answer is: it depends entirely on your data and the real-world consequences of your model's mistakes. While 0.5 is the default threshold used by most machine learning libraries, it is rarely the optimal choice for real-world applications. Choosing the right threshold is a balancing act between two types of errors: False Positives (crying wolf) and False Negatives (missing the wolf) (...)
 
 Summary Strategy
@@ -396,12 +390,13 @@ Scan your validation set predictions across a range of thresholds (e.g., 0.01 to
 
 Compare with the data-driven threshold you found in **(2.6)**. What did the LLM assume? On a class-imbalanced problem like this one, when would following the LLM's generic advice produce a misleading model? (1 point - discussion)
 
+Interestingly, ChatGPT did not specifically make any assumptions. Instead, it centered its answer around three approaches. (1) a default approach for a balanced classes setting where cost of making a False Positive error is equal to that of making a False Negative error; (2) a business/domain cost approach accounting for most real-world scenarios; and (3) a data-driven approach to capture a mathematically optimal threshold.
 
-Interestingly, ChatGPT did not specifically make any assumptions. Instead, it centered its answer around three approaches. (1) a default approach for a balanced classes setting where cost of making a False Positive error is equal to that of making a False Negative error; (2) a business/domain cost approach accounting for most real-world scenarios; and (3) a data-driven approach to capture a mathematically optimal threshold. 
+## 3. Handling class imbalance in classification problems {.unnumbered}
 
-## 3. Handling class imbalance in classification problems {-}
 This part of the assignment is submitted separately in canvas as a peer-reviewed essay. It will not be grade here.
 
+```{=html}
 <!-- ## 3. Handling class imbalance in classification problems (4 points) {-}
 Write a short essay (about 1/2 page) on the topic of handling class imbalance in classification problems. Here are a few questions to guide your research:
 
@@ -414,22 +409,21 @@ Consult 2 or more sources for your research. You can use the following resource 
 - https://machinelearningmastery.com/what-is-imbalanced-classification/
 
 Don't forget to reference your sources including the use of large language models like Chat-GPT. -->
+```
 
+## LLM Use Appendix {.unnumbered}
 
-## LLM Use Appendix {-}
-
-
-- **(1.5)** 
+- **(1.5)**
 
 Prompt:
 
-```text
+``` text
 True or False: Even if the Bayes decision boundary for a given problem is linear, we will probably achieve a superior test error rate using QDA rather than LDA because QDA is flexible enough to model a linear decision boundary. Justify your answer.
 ```
 
 - **(2.8)**
 
-```text
+``` text
 I'm building a binary classifier. What probability threshold should I use to convert predicted probabilities into class labels?
 ```
 

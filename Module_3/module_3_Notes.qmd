@@ -182,6 +182,7 @@ qda_model <- discrim_quad(mode = "classification",
   engine = "MASS") |>
   fit(formula, wine_train)
 ```
+
 1. The backticks in `fixed acidity` allow referencing variables with names that contain spaces
 2. We specify both the `mode` and `engine` explicitly. In this case, all the models use the specified engines by default. However, it is good practice to be explicit about the engine as well.
 
@@ -190,6 +191,7 @@ In classification models, we can predict the score / probability of the classes:
 ```{r}
 predict(logreg_model, wine_holdout, type = "prob") |> head(5)
 ```
+
 The function returns a tibble with the predicted probabilities for each class. The column names are prefixed with `.pred_` followed by the class name. In our case, we have two columns: `.pred_high` and `.pred_low`. The values in these columns represent the predicted probability of the wine being of high or low quality, respectively.
 
 The scores / probabilities are what the model actually calculates. But this is not a classification. To get the predicted class, we don't specifiy the `type`:

@@ -1,0 +1,496 @@
+---
+title: "Module 4 Homework"
+author: "Dimitri Steve AGOGUE"
+date: today 
+format: 
+  html: default
+  typst:
+    margin: 
+      x: 1in
+      y: 1in
+    include-in-header:
+      text: |
+        #show link: set text(fill: blue)
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+
+#| message = false 
+#| warning = false
+#| 
+  library(tidyverse)
+  library(tidymodels)
+  library(patchwork)
+  library(discrim)
+```
+
+```{r mixOmics-install, eval=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager", repos = "https://cloud.r-project.org")
+}
+
+if (!requireNamespace("plsmod", quietly = TRUE)) {
+  install.packages("plsmod", repos = "https://cloud.r-project.org")
+}
+
+if (!requireNamespace("mixOmics", quietly = TRUE)) {
+  BiocManager::install("mixOmics", ask = FALSE, update = FALSE)
+}
+```
+
+```{r set-parallel-processing}
+#| cache: false
+library(future)
+#n_cores <- parallel::detectCores(logical = FALSE)
+plan(multisession, workers = 4)
+```
+
+<!--
+::: {.callout-note}
+In module 5, we learned about tuning hyperparameters of models. In this homework, we are using L1/L2 penalties and dimensionality reduction using PCA and PLS to control the flexibility of our models and reduce the risk of overfitting. We will apply these techniques to build classification and regression models. Both assignments 1 and 2 use datasets from previous assignments. You can reuse the preprocessing steps from these assignments.
+
+You can download the [Quarto Markdown file](https://gedeck.github.io/DS-6030/homework/templates/module-5.qmd) and use it to answer the following questions.
+
+If not otherwise stated, use _Tidyverse_ and _Tidymodels_ for the assignments.
+
+As you will find out, the knitting times for the assignment will get longer as you add more code. To speed up the knitting process, use caching and parallel processing. You can find more information about [caching](https://gedeck.github.io/machine-learning-with-tidymodels/src/904-appendix-technical-details.html#sec-appendix-caching) and [parallel processing](https://gedeck.github.io/machine-learning-with-tidymodels/src/904-appendix-technical-details.html#sec-appendix-parallel) in the online material.
+:::
+
+::: {.callout-warning}
+## LLM use
+You may use an LLM (ChatGPT, Claude, Copilot, etc.) as an assistant on this assignment for example to clarify concepts, debug an error, or review your prose. Your use must stay within the guidelines of the course syllabus. In particular:
+
+1. **Write in your own words.** The syllabus considers it cheating to directly copy someone else's text word for word, or to copy text from ChatGPT or other LLMs. Any explanation or discussion you submit must be written in your own words.
+2. **Do not have the LLM write the assignment for you.** The LLM must not be used to write the full code and text of the assignment. Use it to support and check your own work, not to replace it.
+3. **Verify anything you keep.** LLMs frequently make small but plausible-sounding errors (wrong variable names, made-up `tidymodels` functions, wrong claims about dataset properties). Check anything you keep against the course material or the actual data.
+:::
+-->
+
+## 1. Regularization concepts (2 points) {-}
+
+**(1.1)** Why is `step_normalize` typically applied before L1/L2 regularization? What goes wrong if you regularize without standardizing predictors first? (1 point - discussion)
+
+The application of **step_normalize** prior to L1/L2 regularization is aimed at all numeric predictors in the model, ensuring they are all placed on a common scale with mean \[0\] and standard deviation \[1\]. In a setting where there is substantial variation among predictors in terms of units of measurement, regularizing without standardization would result in unfair penalization of predictors, focussing on their measurement scale rather than on their predictive contribution. Coefficients with larger sizes, due to their predictor's smaller unit of measurement,  will be more severely penalized; and the opposite will happen to coefficients with smaller sizes. 
+
+
+**(1.2)** Now consider when standardization is *not* appropriate. Ask an LLM: "When should I *not* apply `step_normalize` before fitting a model?"
+
+Paste the LLM's response and then evaluate the answer:
+
+```text
+*Gemini's response*: 
+Before fitting a model, step_normalize() should not be used if you are working with tree-based algorithms like Random Forests or XGBoost, as they rely on the relative ordering of values rather than absolute scales and are completely unaffected by feature magnitude. It is also optional or undesirable when you are using standard linear or logistic regressions without penalties and need to interpret the coefficients directly in their raw, native units.
+
+Additionally, you should avoid normalization when dealing with binary or one-hot encoded categorical predictors, as scaling turns intuitive $0/1$ flags into hard-to-interpret fractions. Finally, for sparsity-preserving workflows—such as analyzing large text datasets via TF-IDF matrices—subtracting the mean from columns that are mostly zero converts them into dense matrices, which can rapidly exhaust your system's memory and stall computation times.
+```
+
+- Does it identify specific cases where normalization is unnecessary or harmful (e.g., tree-based models that are scale-invariant, dummy / indicator predictors after `step_dummy`, sparse features where centering destroys sparsity)?
+- Or does it give vague advice without concrete examples?
+
+The LLM effectively pointed at specific scenarios, such as tree-based algorithms like random forests, standard linear/logistic models, binary or one-hot encoded categorical predictors, and analysis of large text datasets, where normalization is not necessary and/or could lead to some complications. 
+
+Add at least one example to its list in your own words, with a short justification.
+
+In a setting where all quantitative predictors have units with measurement ranges substantially close to each other, standardization may not be needed, because it would add little benefit and make coefficients harder to explain. 
+
+(1 point - discussion)
+
+
+## 2. Build elasticnet model for predicting airfare prices (L1/L2 regularization) {-}
+
+The `Airfares.csv.gz` dataset was already used in problem 1 of module 2. In that assignment, we built a model to predict the price of an airline ticket `FARE` using a linear regression model. In this assignment, we will build a model to predict the price of an airline ticket `FARE` using a linear regression model with both L1 and L2 regularization (tuning parameters `mixture` and `penalty`).
+
+Load the [Airfares.csv.gz data](https://gedeck.github.io/DS-6030/datasets/homework/Airfares.csv.gz).
+
+**(2.1)** Load and preprocess the data. Reuse the preprocessing steps you developed in module 2. (1 point - coding)
+
+```{r fare-data-load-cleaning}
+url_1 <- "https://gedeck.github.io/DS-6030/datasets/homework/Airfares.csv.gz"
+
+airfares <- readr::read_csv(url_1)
+#glimpse(airfares)
+
+drop_list <-c("S_CODE", "S_CITY", "E_CODE", "E_CITY")
+
+airfares_clean <- airfares |>
+  select(-all_of(drop_list))|>
+  mutate(VACATION = as.factor(VACATION),
+          SW = as.factor(SW),
+          SLOT = as.factor(SLOT),
+          GATE = as.factor(GATE))
+
+colSums(is.na(airfares_clean))
+
+#glimpse(airfares_clean)
+```
+
+The airfare dataset was succesfully loaded and preprocessed. No missing valued were detected in the dataset.
+
+**(2.2)** Split the data into a training (75%) and test set (25%). Prepare the resamples for 10-fold cross-validation using the training set. (1 point - coding)
+
+```{r fare-data-split-resample}
+set.seed(101)
+
+# splitting the data
+airfares_split <- initial_split(airfares_clean, prop = 0.75)
+airfares_train <- training(airfares_split)
+airfares_test <- testing(airfares_split)
+
+# resamples preparation
+airfares_folds <- vfold_cv(airfares_train, v = 10)
+```
+
+**(2.3)** Define workflow and tunable parameters. In the recipe, include a step to convert the categorical / nominal variables to dummy variables (`step_dummy(all_nominal_predictors())`) (1 point - coding)
+
+```{r airfares-workflow-tuned}
+formula_1 <- FARE ~ COUPON + NEW + VACATION + SW + HI + S_INCOME + E_INCOME + 
+  S_POP + E_POP + SLOT + GATE + DISTANCE + PAX
+
+airfares_recipe <- recipe(formula_1, data = airfares_train)|>
+  step_dummy(all_nominal_predictors())|>
+  step_normalize(all_numeric_predictors())
+
+airfares_spec <- linear_reg(mode = "regression", engine = "glmnet", penalty = tune(), mixture = tune())
+
+airfares_wf <- workflow()|>
+  add_recipe(airfares_recipe)|>
+  add_model(airfares_spec)
+```
+
+**(2.4)** Tune the model with 10-fold cross-validation using Bayesian hyperparameter optimization. Make sure that your search space covers a suitable range of values by inspecting the `autoplot` of the tuning results. (see [Machine learning with tidymodels: Bayesian Hyperparameter optimization](https://gedeck.github.io/machine-learning-with-tidymodels/src/403-model-tuning-1.html#tune-bayesian)) (2 points - coding)
+
+```{r airfares-10-folds-tuned}
+#| fig.cap: Bayesian optimization search tuning results 
+#| fig.alt: Bayesian optimization search tuning results 
+#| out.width: 75%
+#| fig.width: 6
+#| fig.height: 6
+
+custom_metrics <- metric_set(rmse, mae, rsq)
+
+airfares_param <- extract_parameter_set_dials(airfares_wf)|>
+  update(
+    #penalty = penalty(c(-3, -0.75))
+    penalty = penalty(c(-3, 0.75)),
+    mixture = mixture(c(0,1))
+  )
+
+airfares_bayes <- tune_bayes(airfares_wf, resamples = airfares_folds, 
+param_info = airfares_param, iter = 25, metrics = custom_metrics)
+
+airfares_bayes_metrics <- collect_metrics(airfares_bayes)
+
+best_metrics <- show_best(airfares_bayes, metric = "rmse", n = 1)
+autoplot(airfares_bayes) +
+  geom_point(data = best_metrics, aes(x = penalty, y = mixture),
+    color = "red", size = 3)
+
+
+
+```
+
+
+**(2.5)** Train a final model using the best parameter set. (1 point - coding)
+
+```{r airfare-final-model}
+
+best_airfares <- select_best(airfares_bayes, metric = "rmse")
+
+airfares_final_wf <- finalize_workflow(airfares_wf, best_airfares)
+
+airfares_final_fit <- fit(airfares_final_wf, data = airfares_train)
+```
+
+**(2.6)** Predict the `FARE` for the test set and calculate the performance metrics on the test set. (1 point - coding)
+
+```{r test-prediction}
+
+airfares_pred <- predict(airfares_final_fit, new_data = airfares_test)
+
+airfares_test_results <- bind_cols(airfares_test, airfares_pred)
+
+airfares_test_results |>
+  custom_metrics(truth = FARE, estimate = .pred)
+```
+
+
+## 3. NASA: Asteroid classification - classification with dimensionality reduction {-}
+The dataset `nasa.csv` contains information about asteroids and if they are considered to be hazardous or not.
+
+(A) Data loading and preprocessing:
+
+**(3.1)** Load the [NASA data](https://gedeck.github.io/DS-6030/datasets/nasa.csv) and preprocess them. You can find the necessary preprocessing steps in the assignment for module 3. (1 point - coding)
+
+```{r nasa-data-cleaning}
+
+filename <- "https://gedeck.github.io/DS-6030/datasets/nasa.csv"
+remove_columns <- c("Name", "Est Dia in M(min)",
+  "Semi Major Axis", "Jupiter Tisserand Invariant",
+  "Epoch Osculation", "Mean Motion", "Aphelion Dist",
+  "Equinox", "Orbiting Body", "Orbit Determination Date",
+  "Close Approach Date", "Epoch Date Close Approach",
+  "Miss Dist.(Astronomical)", "Miles per hour")
+asteroids <- read_csv(filename, show_col_types = FALSE) |>
+  select(-all_of(remove_columns)) |>
+  select(-contains("Relative Velocity")) |>
+  select(-contains("Est Dia in KM")) |>
+  select(-contains("Est Dia in Feet")) |>
+  select(-contains("Est Dia in Miles")) |>
+  select(-contains("Miss Dist.(lunar)")) |>
+  select(-contains("Miss Dist.(kilometers)")) |>
+  select(-contains("Miss Dist.(miles)")) |>
+  distinct() |>
+  mutate(Hazardous = as.factor(Hazardous))
+dim(asteroids)
+
+# Excluding additional identification variables, and variables used to define the response.
+
+#asteroids <- asteroids |> 
+  #select(-c("Neo Reference ID", "Orbit ID"))|> 
+  #select(-c("Minimum Orbit Intersection", "Absolute Magnitude"))
+
+#glimpse(asteroids)
+```
+
+**(3.2)** Split the dataset into a training and test set. Use 80% of the data for training and 20% for testing. Use stratified sampling to ensure that the training and test set have the same proportion of hazardous asteroids. (1 point - coding)
+
+```{r nasa-data-split}
+set.seed(102)
+asteroids_split <- initial_split(asteroids, prop = 0.8, strata = Hazardous) 
+asteroids_train <- training(asteroids_split)
+asteroids_test <- testing(asteroids_split)
+```
+
+
+```{r prop-verification}
+asteroids_train |>
+  count(Hazardous)|>
+  mutate(prop = n/sum(n))
+
+asteroids_test |>
+  count(Hazardous)|>
+  mutate(prop = n/sum(n))
+```
+(B) Model building:
+
+**(3.3)** Build a logistic regression classification model using principal components (`step_pca`) as predictors. Use cross-validation to determine the optimal number of components. (see [Machine learning with tidymodels: Specifying tunable parameters](https://gedeck.github.io/machine-learning-with-tidymodels/src/403-model-tuning-1.html#sec-specifying-tunable-parameters)) (3 points - coding)
+
+- Use `step_normalize` and `step_pca` to preprocess the data in a recipe.
+- Use the `tune` function to find the best number of components (`num_comp`) in the range 1 to 14 using AUC as the selection criterion. Check **all** possible numbers of components from 1 to 14 (the predictor count after the preprocessing steps).
+- Use the `autoplot` function on the cross-validation results to visualize the results. Describe your observations.
+- Report the best number of components and the associated classification metrics.
+- Using the best parameter set, train a final model using the full training set and determine the performance metrics on the test set.
+
+```{r pca-classification}
+
+# CV folds
+asteroids_folds <- vfold_cv(asteroids_train, v = 10, strata = Hazardous)
+
+# Formula, Recipe, model specification, and workflow
+formula_2 <- Hazardous ~ `Est Dia in M(max)`+ `Orbit Uncertainity` + Eccentricity + 
+  Inclination + `Asc Node Longitude` + `Orbital Period` + `Perihelion Distance` + 
+  `Perihelion Arg` + `Perihelion Time` + `Mean Anomaly`+ `Neo Reference ID` + `Orbit ID` + 
+  `Minimum Orbit Intersection` + `Absolute Magnitude`
+
+pca_recipe <- recipe(formula_2, data = asteroids_train)|>
+  step_normalize(all_numeric_predictors())|>
+  step_pca(all_numeric_predictors(), num_comp = tune())
+
+logreg_spec <- logistic_reg(mode = "classification", engine = "glm")
+
+pca_wf <- workflow()|>
+  add_recipe(pca_recipe)|>
+  add_model(logreg_spec)
+
+# Model tuning 
+pca_grid <- tibble(num_comp = 1:14)
+
+pca_tune <-tune_grid(
+  pca_wf, 
+  resamples = asteroids_folds, 
+  grid = pca_grid, 
+  metrics = metric_set(roc_auc, accuracy)
+)
+
+autoplot(pca_tune)
+
+
+best_pca <- select_best(pca_tune, metric = "roc_auc")
+best_pca
+
+pca_best_metrics <- collect_metrics(pca_tune)|>
+  filter(num_comp == best_pca$num_comp)|>
+  select(.metric, mean, std_err, n)|>
+  rename(Metric = .metric, Mean = mean)
+pca_best_metrics
+
+# Final model and test performance
+final_pca_wf <- finalize_workflow(pca_wf, best_pca)
+final_pca_fit <- fit(final_pca_wf, data = asteroids_train)
+
+pca_test_pred <- predict(final_pca_fit, new_data = asteroids_test)
+pca_test_prob <- predict(final_pca_fit, new_data = asteroids_test, type = "prob")
+pca_test_results <- bind_cols(asteroids_test, pca_test_pred, pca_test_prob)
+
+classification_metrics <- metric_set(accuracy, sens, spec, f_meas, roc_auc)
+#pca_test_results |>
+#  classification_metrics(truth = Hazardous, estimate = .pred_class, .pred_TRUE, event_level = "second")
+
+```
+
+```{r pca-metric-table}
+pca_test_metrics <- pca_test_results |>
+  classification_metrics(
+    truth = Hazardous,
+    estimate = .pred_class,
+    .pred_TRUE,
+    event_level = "second"
+  )
+
+pca_test_metrics |>
+  select(.metric, .estimate) |>
+  mutate(
+    Metric = recode(
+      .metric,
+      accuracy = "Accuracy",
+      sens = "Sensitivity",
+      spec = "Specificity",
+      f_meas = "F-measure",
+      roc_auc = "ROC AUC"
+    ),
+    Value = .estimate
+  ) |>
+  select(Metric, Value) |>
+  knitr::kable(
+    caption = "PCA test performance metrics",
+    digits = 3
+  )
+```
+
+
+Cross-validation selected **13** components, with performance plateauing between 13 and 14 components. The associated performance metrics are **0.96** and **0.99** respectively for accuracy and roc_auc. However, the sharp improvement after adding the variables closely related to the definition of the Hazardous response, combined with logistic-regression separation warnings, indicates likely target leakage. Therefore, the near-perfect AUC should be interpreted cautiously.
+The associated performance metrics are **0.96** and **0.99** respectively for accuracy and roc_auc. 
+
+**(3.4)** Repeat **(3.3)** using PLS (`step_pls`) in the preprocessing steps of the predictors. The model is still classification using logistic regression (see [Machine learning with tidymodels: Partial least squares regression](https://gedeck.github.io/machine-learning-with-tidymodels/src/901-appendix-model.html#partial-least-squares-regression-pls-regression) on how to install the required packages) (3 points - coding)
+
+- Use `step_normalize` and `step_pls` to preprocess the data in a recipe.
+- Use the `tune` function to find the best number of components (`num_comp`) in the range 1 to 14 using AUC as the selection criterion. Check **all** possible numbers of components from 1 to 14 (the predictor count after the preprocessing steps).
+- Use the `autoplot` function on the cross-validation results to visualize the results. Describe your observations.
+- Report the best number of components and the associated classification metrics.
+- Using the best parameter set, train a final model using the full training set and determine the performance metrics on the test set.
+
+```{r pls-classification}
+# Pls recipe and workflow
+pls_recipe <- recipe(formula_2, data = asteroids_train)|>
+  step_normalize(all_numeric_predictors())|>
+  step_pls(all_numeric_predictors(), outcome = "Hazardous", num_comp = tune())
+
+pls_wf <- workflow()|>
+  add_recipe(pls_recipe)|>
+  add_model(logreg_spec)
+
+# Model tuning 
+pls_grid <- tibble(num_comp = 1:14)
+
+pls_tune <-tune_grid(
+  pls_wf, 
+  resamples = asteroids_folds, 
+  grid = pls_grid, 
+  metrics = metric_set(roc_auc, accuracy)
+)
+
+autoplot(pls_tune)
+
+
+best_pls <- select_best(pls_tune, metric = "roc_auc")
+best_pls
+
+pls_best_metrics <- collect_metrics(pls_tune)|>
+  filter(num_comp == best_pls$num_comp)|>
+  select(.metric, mean, std_err, n)|>
+  rename(Metric = .metric, Mean = mean)
+pls_best_metrics
+
+# Final model and test performance
+final_pls_wf <- finalize_workflow(pls_wf, best_pls)
+final_pls_fit <- fit(final_pls_wf, data = asteroids_train)
+
+pls_test_pred <- predict(final_pls_fit, new_data = asteroids_test)
+pls_test_prob <- predict(final_pls_fit, new_data = asteroids_test, type = "prob")
+pls_test_results <- bind_cols(asteroids_test, pls_test_pred, pls_test_prob)
+
+#pls_test_results |>
+#  classification_metrics(truth = Hazardous, estimate = .pred_class, .pred_TRUE, event_level = "second")
+```
+
+```{r pls-metric-table}
+pls_test_metrics <- pls_test_results |>
+  classification_metrics(
+    truth = Hazardous,
+    estimate = .pred_class,
+    .pred_TRUE,
+    event_level = "second"
+  )
+
+pls_test_metrics |>
+  select(.metric, .estimate) |>
+  mutate(
+    Metric = recode(
+      .metric,
+      accuracy = "Accuracy",
+      sens = "Sensitivity",
+      spec = "Specificity",
+      f_meas = "F-measure",
+      roc_auc = "ROC AUC"
+    ),
+    Value = .estimate
+  ) |>
+  select(Metric, Value) |>
+  knitr::kable(
+    caption = "PLS test performance metrics",
+    digits = 3
+  )
+```
+
+PLS achieved near-maximum performance with substantially fewer components than PCA. Nevertheless, the unusually high performance likely reflects target leakage from variables involved in defining hazardous status.
+The select_best() function identifies **13** as the best number of component. The associated performance metrics are **0.96** and **0.99** respectively for accuracy and roc_auc. 
+
+
+**(3.5)** Create a figure that combines the `autoplot` of the tuning results from **(3.3)** and **(3.4)**. Do you see different behavior in the `autoplot` graphs? What do you think is going on? Could you reduce the number of components further from what is suggested by CV?
+
+```{r plot-tuning-results}
+pca_plot <- autoplot(pca_tune) +
+  labs(title = "PCA tuning results")
+
+pls_plot <- autoplot(pls_tune) +
+  labs(title = "PLS tuning results")
+
+pca_plot + pls_plot
+```
+
+There is a noticeable difference in behavior between the two autoplot graphs. PCA improves slowly with a late jump around components 10 - 13 whereas PLS captures nearly all predictive information within roughly 4 - 6 components. Since PCA is unsupervised, its most predictive information appeared only in later components. Yes, the number of components could be further reduced especially based on the PLS plot. Even though select_best() may choose 13 PLS components for a small numerical gain, the curve suggests a smaller model could perform nearly as well.
+
+
+Then, without showing the LLM your figure or results, ask it: "I'm building a classification model with a recipe that uses `step_pca` for dimensionality reduction. Should I switch to `step_pls`? Why or why not?"
+
+Paste the LLM's response and then evaluate the answer:
+
+**Gemini response:** 
+```text
+Whether you should switch from `step_pca` to `step_pls` depends on whether the variance in your predictor variables aligns with your classification labels. As an unsupervised method, **`step_pca` (Principal Component Analysis)** captures the maximum variance purely within your predictors without any knowledge of your target classes. This means it can sometimes get distracted by high-variance noise and miss low-variance features that are critical for classification. In contrast, **`step_pls` (Partial Least Squares)** is a supervised technique that explicitly extracts components by maximizing the covariance between your predictors and your outcome variable, often allowing you to achieve better class separation with fewer components.
+
+However, because `step_pls` uses the target variable to guide feature extraction, it carries a significantly higher risk of overfitting, especially on smaller datasets. It is also more computationally demanding than PCA. Rather than guessing which is better, the most robust approach is to treat this choice as a hyperparameter within your `tidymodels` workflow. By setting up a `workflow_set` to tune and compare both recipes across your cross-validation folds, you can let your data's empirical performance metrics dictate the best choice.
+```
+
+- Does it correctly identify that PCA is unsupervised (ignores the response) while PLS uses the response, so PLS components are more likely to be discriminative for classification?
+- Or does it default to vague "it depends" without engaging with the supervised/unsupervised asymmetry?
+
+Compare with what you observed in your figure. Did the data confirm or contradict the LLM's answer?
+
+(2 points - discussion)
+
+
+The LLM response correctly explains the conceptual characteristics of the unsupervised PCA versus the supervised PLS. It explicitly points at those characteristics and states their implications for components extractions. Specifically, the LLM confirms PLS often achieves better class separation with fewer components. Furthermore, the LLM recommends basing the choice on the more empirical approach of hyperparameter tuning within tidymodels workflow. Overall this answer aligns closely with our findings, confirmed by the data in this setting. 

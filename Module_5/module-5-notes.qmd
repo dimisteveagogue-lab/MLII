@@ -1,0 +1,708 @@
+```{r setup}
+#| include: FALSE
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, autodep = TRUE,
+  fig.align = "center")
+```
+
+## Case study: predicting high vs low mpg
+Last week, we learned
+
+- how to implement a classification workflow using _tidymodels_,
+- how to evaluate the model performance using cross-validation and a holdout set, and
+- how to tune the threshold of a classification model.
+
+We used ROC curves and AUC values to compare models. 
+
+This class, we will focus on tuning the hyperparameters of models. We will see how to implement hyperparameter tuning using grid search, random search, and Bayesian hyperparameter tuning.
+
+
+```{r load-packages}
+#| message: FALSE
+library(tidymodels)
+library(tidyverse)
+library(discrim)
+library(patchwork)
+```
+
+We start a cluster for faster calculations. With larger datasets and more complex models, tuning can take a long time. Using multiple CPU cores can speed up the process significantly.
+```{r setup-parallel}
+#| cache: FALSE
+#| message: FALSE
+library(future)
+plan(multisession, workers = parallel::detectCores(logical = FALSE))
+```
+
+
+## Load dataset 
+Prepare dataset for classification. We convert the continuous `mpg` variable into a binary outcome.
+```{r load-data}
+auto <- ISLR2::Auto |>
+  as_tibble() |>
+  mutate(
+    cylinders = factor(cylinders),
+    origin = factor(origin),
+    mpg = factor(ifelse(mpg > quantile(mpg, 0.8), "high", "low"),  # <1>
+      levels = c("high", "low")),
+    #mpg = factor(ifelse(mpg > median(mpg), "high", "low"),
+    #    levels = c("high", "low")),
+  ) |>
+  select(-name)  # remove name column
+```
+1. We use the 80th percentile as the threshold to create the binary outcome. This is somewhat arbitrary, but it creates a more imbalanced classification problem, which is more interesting for tuning and evaluation. You can change this to the median or any other value to see how it affects the results.
+
+Due to the way we split the dataset, the resulting classification problem has a moderate imbalance (see @fig-mpg-distribution).
+```{r fig-mpg-distribution}
+#| fig.cap: Distribution of the binary outcome variable (mpg)
+#| fig.alt: Distribution of the binary outcome variable (mpg)
+#| fig.width: 6
+#| fig.height: 3
+#| out.width: 75%
+ggplot(auto, aes(x = mpg)) +
+  geom_bar() +
+  labs(title = "Distribution of mpg classes")
+```
+
+## Split dataset into training and holdout
+```{r split-data}
+set.seed(1)  # <1>
+auto_split <- initial_split(auto, prop = 0.80, strata = mpg)
+train <- training(auto_split)
+test <- testing(auto_split)
+```
+1. Important! Setting a seed ensures that the random split is reproducible.
+
+## Models without tuning
+This section is a recap of last week to derive a baseline performance using fixed hyperparameters. 
+
+### Specify recipe, models, and workflows
+```{r linear-regression}
+formula <- mpg ~ displacement + horsepower + weight + acceleration + year
+
+rec <- recipe(formula, data = train) |>
+  step_normalize(all_numeric_predictors()) # <1>
+
+logreg_spec <- logistic_reg(engine = "glm", mode = "classification")
+nn_spec <- nearest_neighbor(engine = "kknn", mode = "classification")  # <2>
+
+logreg_wf <- workflow() |>
+  add_recipe(rec) |>
+  add_model(logreg_spec)
+nn_wf <- workflow() |>
+  add_recipe(rec) |>
+  add_model(nn_spec)
+```
+1. Normalization is important for distance-based models like nearest neighbors. 
+2. The default value for `neighbors` is 5.
+
+
+### Cross-validation
+```{r}
+#| message: false
+resamples <- vfold_cv(train, v = 10, strata = mpg)
+cv_metrics <- metric_set(roc_auc, accuracy)
+cv_control <- control_resamples(save_pred = TRUE)
+cv_control_bayes <- control_bayes(save_pred = TRUE)  # <1>
+
+logreg_cv <- fit_resamples(logreg_wf, resamples,
+  metrics = cv_metrics, control = cv_control)
+nn_cv <- fit_resamples(nn_wf, resamples,
+  metrics = cv_metrics, control = cv_control)
+```
+1. `control_bayes` is similar to `control_resamples` and is needed for Bayesian hyperparameter tuning later.
+
+### Performance metrics
+@fig-metrics-untuned shows the cross-validation performance metrics for the logistic regression and nearest neighbors models with default hyperparameters. The points are the mean performance across the 10 folds and the error bars represent the standard error of the mean. 
+```{r fig-metrics-untuned}
+#| fig.cap: Cross-validation performance metrics (untuned)
+#| fig.alt: Cross-validation performance metrics (untuned)
+#| fig.width: 6
+#| fig.height: 3
+#| out.width: 75%
+cv_performance <- bind_rows(
+  collect_metrics(logreg_cv) |> mutate(model = "Logistic regression"),
+  collect_metrics(nn_cv) |> mutate(model = "Nearest neighbors"),
+)
+ggplot(cv_performance, aes(x = mean, y = model,
+    xmin = mean - std_err, xmax = mean + std_err)) +
+  geom_point() +
+  geom_linerange() +
+  facet_wrap(~ .metric)
+```
+
+Because we saved the out-of-fold predictions, we can also create ROC curves based on the cross-validation results. @fig-roc-curves-untuned shows the ROC curves for the logistic regression and nearest neighbors models with default hyperparameters.
+```{r fig-roc-curves-untuned}
+#| fig.cap: ROC curves for logistic regression and nearest neighbors (default hyperparameters)
+#| fig.alt: ROC curves for logistic regression and nearest neighbors (default hyperparameters)
+#| fig.width: 7
+#| fig.height: 3.5
+#| out.width: 75%
+roc_cv_plot <- function(model_cv, model_name) {
+  cv_predictions <- collect_predictions(model_cv)
+  cv_roc <- cv_predictions |>
+    roc_curve(truth = mpg, .pred_high, event_level = "first")
+  return(autoplot(cv_roc) + labs(title = model_name))
+}
+g1 <- roc_cv_plot(logreg_cv, "Logistic regression")
+g2 <- roc_cv_plot(nn_cv, "Nearest neighbors")
+g1 + g2
+```
+
+
+### Train models
+As a final step, we train the models on the full training set using the default hyperparameters. We could use these fitted models to determine the performance on the holdout set. We will do that later on.
+```{r}
+logreg_untuned_model <- logreg_wf |>
+  fit(train)
+nn_untuned_model <- nn_wf |>
+  fit(train)
+```
+
+## Tune the models
+::: {.callout-tip title="Note"}
+The models are not really "untuned." We use them in fact with default hyperparameters. These are:
+
+- The logistic regression model has **no regularization**
+- The nearest neighbors model uses the following defaults: 
+    - `neighbors = 5`
+    - `weight_func = "optimal"`
+    - `dist_power = 2` (Euclidean distance)  
+:::
+    
+Tunable models have hyperparameters that can be adjusted to improve the model fit. In fact, you should always tune the hyperparameters of your models to get the best performance.
+
+### Logistic regression => penalized logistic regression (glm => glmnet)
+The `glmnet` package allows us to apply regularization to the logistic regression model. Regularization is a technique to prevent overfitting by penalizing large coefficients in the model. Regularization can also be applied to linear regression models. 
+
+In regularization of logistic regression, we add a penalty term that aims to minimize the size of the coefficients. Depending on how the penalty is calculated, we talk about L1 (Manhattan distance from origin) and L2 (Euclidean distance from origin) regularization. In the `glmnet` package, the strength of the penalty is controlled by the `penalty` parameter, and the balance between L1 and L2 regularization is controlled by the `mixture` parameter.
+
+In logistic regression we have the following types of regularization:
+
+- Elastic net: we are going to tune the strength of regularization (`penalty`) and the 
+  balance between L1 and L2 regularization (`mixture`).
+- Lasso logistic regression: L1 regularization (set `mixture = 1` and tune `penalty`)
+- Ridge logistic regression: L2 regularization (set `mixture = 0` and tune `penalty`)
+- [Read more about regularization](https://gedeck.github.io/machine-learning-with-tidymodels/src/404-model-tuning-2.html#sec-tune-regularization)
+
+Now we specify an elastic net model (logistic regression with both L1 and L2 regularization) with tunable `penalty` and `mixture` parameters.
+```{r}
+tune_logreg_spec <- logistic_reg(engine = "glmnet",
+  mode = "classification", penalty = tune(), mixture = tune())  # <1>
+
+tune_logreg_wf <- workflow() |>
+  add_recipe(rec) |>
+  add_model(tune_logreg_spec)
+logreg_params <- extract_parameter_set_dials(tune_logreg_wf) |> # <2>
+  update(
+    penalty = penalty(c(-3, -0.75)),  # <3>
+    # penalty = penalty(c(-10, 2)),
+    mixture = mixture(c(0, 1)) # <4>
+  )
+```
+1. We tune both the `penalty` and the `mixture` parameters to explore elastic net regularization.
+2. You could start with `logreg_params <- extract_parameter_set_dials(tune_logreg_wf)`,
+  but make sure that the default range contains the minimum by looking at the `autoplot`
+  graph of the tuning results and adjust the range if needed.
+3. The `penalty` parameter is on a log10 scale, so the values -3 and -0.75 correspond to 10^-3 and 10^-0.75, respectively. This allows us to explore a wide range of regularization strengths, from relatively weak regularization (10^-3) to stronger regularization (10^-0.75). You can adjust this range based on the results of your tuning process. Start with a wide range and then narrow it down based on the tuning results.
+4. This is the default range, so we don't actually need to specify it. However, it is good practice to specify the range of values to be tested for each tunable parameter to ensure that we are exploring a reasonable range of hyperparameters.
+
+::: {.callout-tip title="Note"}
+`glmnet` can also be used for linear regression models with L1/L2 regularization (**see homework**). The only difference in the model specification is that we set `mode = "regression"` instead of `mode = "classification"`. The tuning process is the same as for classification models. For example, for a linear regression model with elastic net regularization, we would specify the model as follows:
+```{r}
+#| eval: FALSE
+model_spec <- linear_reg(engine = "glmnet", mode = "regression",
+  penalty = tune(), mixture = tune())
+```
+:::
+
+### Nearest neighbors
+For nearest neighbors, we can tune the number of neighbors (`neighbors`).
+
+```{r}
+tune_nn_spec <- nearest_neighbor(engine = "kknn", mode = "classification",
+  neighbors = tune())  # <1>
+tune_nn_wf <- workflow() |>
+  add_recipe(rec) |>
+  add_model(tune_nn_spec)
+nn_params <- extract_parameter_set_dials(tune_nn_wf) |>  # <2>
+  update(neighbors = neighbors(c(2, 40)))  # <3>
+```
+1. Adding the `neighbors = tune()` argument to the model specification informs the _tidymodels_ framework that this hyperparameter should be tuned.
+2. Using `extract_parameter_set_dials(wf)` extracts all tunable parameters from the workflow. 
+3. Many hyperparameters have default ranges, but we can and should always adjust them using the `update` function.
+In _tidymodels_, tunable parameters have specialized functions, like `neighbors` here, to specify the range of values to be tested. This helps you to avoid mistakes like using a negative number of neighbors, or a non-integer number of neighbors.
+
+::: {.callout-tip title="Note"}
+If we specify a tunable parameter in the model specification, we cannot fit the model until we have selected a specific value for that parameter. The tuning process will explore different values for the tunable parameter and evaluate the model performance for each combination of hyperparameters. Once we have identified the best hyperparameter combination, we _finalize_ the workflow with those specific values to obtain a workflow with fixed hyperparameters and fit the model on the full training set (see @sec-finalize-model).
+:::
+
+
+
+### Cross-validation combined with tuning
+#### Nearest neighbors
+Because the number of neighbors is a single hyperparameter with a defined number of possible values, we can use a regular grid search to explore the hyperparameter space. Here, we use values between 2 and 40 for the number of neighbors, which means we have 39 ($= 40 - 2 + 1$) possible values to test. 
+```{r}
+#| message: false
+tune_results_nn <- tune_grid(tune_nn_wf,  # <1>
+  resamples = resamples,  # <2>
+  control = cv_control,  # <3>
+  metrics = cv_metrics, # <4>
+  grid = grid_regular(nn_params, levels = 39))
+```
+1. We use the `tune_grid` function here to perform a grid search over the specified hyperparameter values.
+2. The resamples are the same as for the cross-validation without tuning. This means, we tune the hyperparameters using the same folds as before. However, _tidymodels_ evaluates now a much larger number of models (one for each hyperparameter combination times the cross-validation folds).
+3. We use the same control settings as for the cross-validation without tuning.
+4. We use the same performance metrics as for the cross-validation without tuning. 
+
+The `autoplot` function is a great way to check our tuning results
+and see if we explore the hyperparameters sufficiently
+```{r fig-nn-tuning}
+#| fig.cap: Regular grid search tuning results for nearest neighbors
+#| fig.alt: Regular grid search tuning results for nearest neighbors
+#| out.width: 75%
+#| fig.width: 6
+#| fig.height: 6
+best_roc_auc <- show_best(tune_results_nn, metric = "roc_auc", n = 1)
+autoplot(tune_results_nn) +
+  geom_point(data = best_roc_auc, aes(x = neighbors, y = mean),
+    color = "red", size = 3)
+```
+@fig-nn-tuning shows a graphical representation of the tuning results. For each metric, we see how the performance changes with different values of the number of neighbors. The points represent the mean performance across the cross-validation folds for each value of the number of neighbors. Because we have only one hyperparameter, the plot is a line plot.
+
+For accuracy and ROC-AUC, we want to maximize the metric, so we look for the highest point on the graph. For other metrics, we may want to minimize the metric, so we would look for the lowest point on the graph.
+For all metrics, we see that the optimal value for the number of neighbors is within the range of values we explored.
+
+::: {.callout-important title="Insufficient tuning for default hyperparameters"}
+What would have happened if we had just used the default tuning grid?
+```{r fig-nn-tuning-default}
+#| fig.cap: Insufficient parameter search - regular grid search
+#| fig.alt: Insufficient parameter search - regular grid search
+#| message: false
+#| out.width: 50%
+#| fig.width: 4
+#| fig.height: 4
+insufficient_tuning <- tune_grid(tune_nn_wf,
+  resamples = resamples,
+  control = cv_control,
+  metrics = cv_metrics,
+  grid = grid_regular(extract_parameter_set_dials(tune_nn_wf)))
+
+autoplot(insufficient_tuning)
+```
+With the default values, we only explore three values for the number of neighbors (1, 8, and 15). This is not sufficient to find the optimal value.
+:::
+
+
+#### Penalized logistic regression
+We have two hyperparameters to tune. While in principle, you could create a grid with all combinations of several values for each hyperparameter, it is more efficient to use a random search. It may not give you the "best" combination, but in general it gives you a "good enough" combination of hyperparameters.
+```{r}
+tune_results_logreg <- tune_grid(tune_logreg_wf,
+  resamples = resamples,
+  control = cv_control,
+  metrics = cv_metrics,
+  grid = grid_random(logreg_params, size = 50))  # <1>
+show_best(tune_results_logreg, metric = "roc_auc", n = 1)
+```
+1. We use `grid_random` to perform a random search over the specified hyperparameter values. Note that in this case, we use the `size` argument to specify how many random combinations of hyperparameters to test. In this case, we test 50 random combinations of the `penalty` and `mixture` parameters.
+
+@fig-logreg-tuning shows the tuning results for the penalized logistic regression model.
+```{r}
+#| eval: FALSE
+autoplot(tune_results_logreg)
+```
+```{r fig-logreg-tuning}
+#| fig.cap: Random hyperparameter tuning results for penalized logistic regression
+#| fig.alt: Random hyperparameter tuning results for penalized logistic regression
+#| out.width: 75%
+#| fig.width: 6
+#| fig.height: 6
+#| code-fold: true
+p <- autoplot(tune_results_logreg)
+
+best_vals <- collect_metrics(tune_results_logreg) |>
+  group_by(.metric) |>
+  slice_max(mean, n = 1) |>
+  ungroup() |>
+  select(.metric, mean)
+
+best_pts <- p$data |>
+  semi_join(best_vals, by = c(".metric", "mean"))
+
+p + geom_point(data = best_pts, aes(x = value, y = mean),
+               color = "red", size = 3)
+```
+It is less obvious what is happening here because we have two hyperparameters. Nevertheless, we can see that the optimal metric values are within the explored hyperparameter space.
+
+The best combination of hyperparameters depends on the metric we want to optimize. 
+
+::: {.callout-tip title="Note"}
+For L1/L2 regularization, the guideline to look for optimal parameter values within the explored hyperparameter space doesn't fully apply here. For example, you might see that the optimal value of `penalty` is at the lower end of the explored range trending towards zero. This means that regularization is not needed and the optimal model is a regular logistic regression model without regularization. For elastic net, `mixture` values of 0 or 1 are acceptable.
+:::
+
+::: {.callout-important title="Insufficient tuning for default hyperparameters"}
+Again it is useful to see what happens if we just use the default settings;
+
+- 5 random combinations
+- penalty in $[10^{-10}, 10^0]$
+- mixture in $[0.05, 1]$
+```{r fig-logreg-tuning-default}
+#| fig.cap: Insufficient parameter search - random search
+#| fig.alt: Insufficient parameter search - random search
+#| out.width: 75%
+#| fig.width: 6
+#| fig.height: 6
+insufficient_tuning_logreg <- tune_grid(tune_logreg_wf,
+  resamples = resamples,
+  control = cv_control,
+  metrics = cv_metrics,
+  grid = grid_random(extract_parameter_set_dials(tune_logreg_wf)))
+
+autoplot(insufficient_tuning_logreg)
+```
+@fig-logreg-tuning-default shows that the exploration of the hyperparameter space is insufficient. 
+:::
+
+#### Penalized logistic regression with Bayesian hyperparameter tuning
+For several hyperparameters, Bayesian hyperparameter tuning is often a more efficient way to tune models. It uses the results of previous iterations to inform the selection of hyperparameters for the next iteration. At each iteration, it either focuses on the exploitation of known promising areas or the exploration of new areas.
+```{r logreg-bayes-tune}
+tune_results_logreg_bayes <- tune_bayes(tune_logreg_wf,
+  resamples = resamples,
+  control = cv_control_bayes,
+  metrics = cv_metrics,
+  param_info = logreg_params,  # <1>
+  iter = 25)  # <2>
+show_best(tune_results_logreg_bayes, metric = "roc_auc", n = 1)
+```
+1. In Bayesian hyperparameter tuning, we don't explore a grid, we explore a parameter space. We define it using the `param_info` argument, which takes the same parameter set specification used in `grid_random`.
+2. The `iter` argument specifies the number of iterations for the Bayesian optimization process. You may need to adjust this based on the complexity of your model and the size of your dataset. Generally, more iterations allow for a more thorough exploration of the hyperparameter space, but it also increases the computational time. In general, you should be able to have good results with fewer iterations than for a random search.
+
+You sometimes get this message:
+
+> ! No improvement for 10 iterations; returning current results.
+
+This means that the optimization process stopped early because it already found a good enough solution that it could no longer improve. 
+
+The `autoplot` function for these tuning results is shown in @fig-logreg-bayes-tuning.
+```{r}
+#| eval: FALSE
+autoplot(tune_results_logreg_bayes)
+```
+```{r fig-logreg-bayes-tuning}
+#| fig.cap: Bayesian hyperparameter tuning results for penalized logistic regression
+#| fig.alt: Bayesian hyperparameter tuning results for penalized logistic regression
+#| out.width: 75%
+#| fig.width: 6
+#| fig.height: 6
+#| code-fold: true
+p <- autoplot(tune_results_logreg_bayes)
+
+best_vals <- collect_metrics(tune_results_logreg_bayes) |>
+  group_by(.metric) |>
+  slice_max(mean, n = 1) |>
+  ungroup() |>
+  select(.metric, mean)
+
+best_pts <- p$data |>
+  semi_join(best_vals, by = c(".metric", "mean"))
+
+p + geom_point(data = best_pts, aes(x = value, y = mean),
+               color = "red", size = 3)
+```
+@fig-logreg-bayes-tuning shows the tuning results for the penalized logistic regression model using Bayesian hyperparameter tuning. We can see how the iterative tuning process focuses on areas with high ROC-AUC and accuracy values. Areas with low performance are explored less frequently.
+
+
+We can compare how the Bayesian hyperparameter search process compares to the random search. 
+```{r fig-logreg-tuning-comparison}
+#| fig.cap: Comparison of random and Bayesian hyperparameter search for penalized logistic regression
+#| fig.alt: Comparison of random and Bayesian hyperparameter search for penalized logistic regression
+#| fig.width: 6
+#| fig.height: 3
+#| out.width: 75%
+df <- bind_rows(
+  collect_metrics(tune_results_logreg) |>
+    mutate(model = "Logistic regression tuned"),
+  collect_metrics(tune_results_logreg_bayes) |>
+    mutate(model = "Logistic regression tuned (Bayes)")
+) |>
+  filter(.metric %in% c("roc_auc")) |>
+  arrange(desc(mean))
+df_random <- df |>
+  filter(model == "Logistic regression tuned")
+df_bayes <- df |>
+  filter(model == "Logistic regression tuned (Bayes)")
+
+ggplot(df, aes(x = penalty, y = mixture, z = mean)) +
+  geom_point(data = df_random) +
+  geom_point(data = df_random |> head(1), color = "red") +
+  geom_point(data = df_bayes) +
+  geom_point(data = df_bayes |> head(1), color = "red") +
+  scale_x_log10() +
+  facet_wrap(~ model)
+```
+We can see in @fig-logreg-tuning-comparison that the Bayesian hyperparameter search focuses on the lower middle area and requires fewer iterations to find a good hyperparameter combination. 
+
+### Identifying the best hyperparameters
+Our tuning results contain all the metrics and predictions for the explored hyperparameter combinations. We can get access to these by using the `collect_metrics` and `collect_predictions` functions.
+```{r}
+collect_metrics(tune_results_logreg)
+```
+We could manipulate this tibble to get the best hyperparameters for a specific metric or just use the `show_best` function to get the best hyperparameter combination for a specific metric.
+```{r}
+show_best(tune_results_logreg, metric = "roc_auc", n = 1)
+```
+To further work with the best hyperparameter combination, we can extract a suitable object using `select_best`:
+```{r}
+best_params_logreg <- select_best(tune_results_logreg,
+  metric = "roc_auc")
+best_params_nn <- select_best(tune_results_nn,
+  metric = "roc_auc")
+```
+::: {.callout-note title="Question"}
+Why did we choose `roc_auc` as the metric to select the _best_ hyperparameter combination?
+:::
+
+Now that we have the best hyperparameter combination, we can use that to get the cross-validation out-of-fold predictions.
+```{r}
+collect_predictions(tune_results_logreg,
+  parameters = best_params_logreg)  # <1>
+```
+1. We need to use the `parameters` argument to specify which hyperparameter combination we want to get the predictions for. If we don't specify this, we get the predictions for all hyperparameter combinations, which is not what we want for further analysis.
+
+```{r}
+best_params_logreg_bayes <- select_best(tune_results_logreg_bayes,
+  metric = "roc_auc")
+```
+
+::: {.callout-warning}
+Be careful when using the `collect_predictions` function with tuning results. By default, it will return all predictions for all hyperparameter combinations.
+```{r}
+dim(collect_predictions(tune_results_logreg))
+```
+Compare this to the result when we specify the best hyperparameters:
+```{r}
+dim(collect_predictions(tune_results_logreg,
+    parameters = best_params_logreg))
+```
+:::
+
+### Visualize the tuning results as ROC and precision-recall curves
+Let's see how we can make use of the tuning results to create ROC curves.
+```{r fig-cv-roc-curve-tuned}
+#| fig.cap: Comparison of ROC curves before and after tuning
+#| fig.alt: Comparison of ROC curves before and after tuning
+#| fig.width: 7
+#| fig.height: 7
+#| out.width: 75%
+roc_cv_plot_tune <- function(cv_predictions, model_name) {  # <1>
+  cv_roc <- cv_predictions |>
+    roc_curve(truth = mpg, .pred_high, event_level = "first")
+  return(autoplot(cv_roc) + labs(title = model_name))
+}
+
+g1 <- roc_cv_plot(logreg_cv, "Logistic regression")
+g2 <- roc_cv_plot(nn_cv, "NN")
+g1_tuned <- roc_cv_plot_tune(
+  collect_predictions(tune_results_logreg,
+    parameters = best_params_logreg),
+  "Logistic regression tuned")
+g2_tuned <- roc_cv_plot_tune(
+  collect_predictions(tune_results_nn,
+    parameters = best_params_nn),
+  "Nearest neighbors tuned")
+
+(g1 + g2) / (g1_tuned + g2_tuned)
+```
+1. We create a helper function `roc_cv_plot_tune` to create ROC curves from the cross-validation predictions with a title.
+
+We can clearly see the effect of tuning. It becomes more obvious when we overlay the curves:
+
+```{r fig-cv-roc-curve}
+#| fig.cap: ROC curves based on cross-validation results
+#| fig.alt: ROC curves based on cross-validation results
+#| fig.width: 10.5
+#| fig.height: 3.5
+#| out.width: 100%
+g1 <- bind_rows(
+  collect_predictions(logreg_cv)  |>
+    mutate(model = "Logistic regression"),
+  collect_predictions(tune_results_logreg,
+    parameters = best_params_logreg)  |>
+    mutate(model = "Logistic regression tuned"),
+  collect_predictions(tune_results_logreg_bayes,
+    parameters = best_params_logreg_bayes)  |>
+    mutate(model = "Logistic regression tuned (Bayes)")
+) |>
+  group_by(model) |>
+  roc_curve(truth = mpg, .pred_high, event_level = "first") |>
+  autoplot()
+g2 <- bind_rows(
+  collect_predictions(nn_cv)  |>
+    mutate(model = "NN"),
+  collect_predictions(tune_results_nn,
+    parameters = best_params_nn)  |>
+    mutate(model = "NN tuned")
+) |>
+  group_by(model) |>
+  roc_curve(truth = mpg, .pred_high, event_level = "first") |>
+  autoplot()
+g1 + g2
+```
+
+For imbalanced data, it can be more instructive to compare precision-recall curves, as it focuses on the positive class.
+
+- Precision is a ratio of the number of true positives divided by the sum of the true positives and false positives. It focuses on the question:
+  _Of all the `high` predictions we made, how many were actually `high`?_
+- Recall is the same as sensitivity. It focuses on the question:
+  _Of all the actual `high` cases that exist, how many did we correctly predict as `high`?_
+
+We can get those with a small change to our previous code:
+```{r fig-cv-precision-recall}
+#| fig.cap: Precision-recall curves based on cross-validation results
+#| fig.alt: Precision-recall curves based on cross-validation results
+#| fig.width: 12
+#| fig.height: 5
+#| out.width: 100%
+g1 <- bind_rows(
+  collect_predictions(logreg_cv)  |>
+    mutate(model = "Logistic regression"),
+  collect_predictions(tune_results_logreg,
+    parameters = best_params_logreg)  |>
+    mutate(model = "Logistic regression tuned")
+) |>
+  group_by(model) |>
+  pr_curve(truth = mpg, .pred_high, event_level = "first") |>
+  autoplot()
+g2 <- bind_rows(
+  collect_predictions(nn_cv)  |>
+    mutate(model = "NN"),
+  collect_predictions(tune_results_nn,
+    parameters = best_params_nn)  |>
+    mutate(model = "NN tuned")
+) |>
+  group_by(model) |>
+  pr_curve(truth = mpg, .pred_high, event_level = "first") |>
+  autoplot()
+g1 + g2
+```
+
+
+
+## Finalize the model with best tuning results {#sec-finalize-model}
+Once we have found the best hyperparameters, we can create a workflow with the tuned parameters. This allows us to:
+
+- tune the threshold
+- train a model and predict performance on holdout set
+
+Use `finalize_workflow` to obtain a workflow where the tunable parameters are replaced by their _optimal_ values.
+```{r}
+tuned_logreg_model <- tune_logreg_wf |>
+  finalize_workflow(select_best(tune_results_logreg,
+      metric = "roc_auc")) |>
+  fit(train)
+tuned_nn_model <- tune_nn_wf |>
+  finalize_workflow(select_best(tune_results_nn,
+      metric = "roc_auc")) |>
+  fit(train)
+```
+
+## Compare models (cross-validation and holdout set)
+Collect the cross-validation metrics
+```{r}
+cv_performance <- bind_rows(
+  collect_metrics(logreg_cv) |>
+    mutate(model = "Logistic regression untuned"),
+  show_best(tune_results_logreg, metric = "accuracy", n = 1) |>
+    mutate(model = "Logistic regression tuned"),
+  show_best(tune_results_logreg, metric = "roc_auc", n = 1) |>
+    mutate(model = "Logistic regression tuned"),
+  collect_metrics(nn_cv) |>
+    mutate(model = "Nearest neighbors untuned"),
+  show_best(tune_results_nn, metric = "accuracy", n = 1) |>
+    mutate(model = "Nearest neighbors tuned"),
+  show_best(tune_results_nn, metric = "roc_auc", n = 1) |>
+    mutate(model = "Nearest neighbors tuned"),
+)
+```
+@fig-cv-auc creates a visualization of the performance metrics based on cross-validation results.
+```{r fig-cv-auc}
+#| fig.cap: Accuracy and ROC AUC values for cross-validation results
+#| fig.alt: Accuracy and ROC AUC values for cross-validation results
+#| fig.width: 4
+#| fig.height: 3
+#| out.width: 75%
+ggplot(cv_performance, aes(x = mean, y = model,
+    xmin = mean - std_err, xmax = mean + std_err)) +
+  geom_point() +
+  geom_linerange() +
+  facet_wrap(~ .metric)
+```
+
+Calculate AUC values using the holdout set
+```{r fig-holdout-auc}
+#| fig.cap: AUC values for the holdout set
+#| fig.alt: AUC values for the holdout set
+#| warning: false
+#| fig.width: 4
+#| fig.height: 3
+#| out.width: 75%
+auc_holdout <- bind_rows(
+  augment(logreg_untuned_model, test) |>  # <1>
+    roc_auc(mpg, .pred_high, event_level = "first") |>
+    mutate(model = "logreg untuned"),
+  augment(tuned_logreg_model, test) |>
+    roc_auc(mpg, .pred_high, event_level = "first") |>
+    mutate(model = "logreg tuned"),
+  augment(nn_untuned_model, test) |>
+    roc_auc(mpg, .pred_high, event_level = "first") |>
+    mutate(model = "Nearest neighbors untuned"),
+  augment(tuned_nn_model, test) |>
+    roc_auc(mpg, .pred_high, event_level = "first") |>
+    mutate(model = "Nearest neighbors tuned"),
+)
+ggplot(auc_holdout, aes(x = .estimate, y = model)) +
+  geom_point() +
+  facet_wrap(~ .metric)
+```
+1. For each model, we use the `augment` function to get the predictions for the holdout set and then calculate the AUC using the `roc_auc` function. 
+
+
+## Summary
+We implemented the following steps for models without tuning
+
+1. Data loading and preparation
+2. Split the dataset into training and holdout set
+3. Specified the models and workflows
+4. 10-fold cross-validation with default hyperparameters
+5. Evaluation of cross-validation results
+    - ROC-AUC and accuracy
+    - ROC curves
+6. Trained the models on the full training set
+7. Evaluation of the holdout set performance
+
+We then added tuning of the hyperparameters of the models
+
+1. Data loading and preparation
+2. Split the dataset into training and holdout set
+3. Specified the models and workflows
+4. **Tuning hyperparameters using 10-fold cross-validation for each hyperparameter combination**
+5. **Identify the best hyperparameter combination and use that for further analysis**
+6. Evaluation of cross-validation results
+    - ROC-AUC and accuracy
+    - ROC curves
+7. **Create workflows with the best hyperparameters**
+8. Trained the models on the full training set
+9. Evaluation of the holdout set performance
+
+This time we did not tune the threshold for the classification. This could be done following step 6 or 7 using the out-of-fold predictions from the best hyperparameter combination as was done in the previous live session. An second option would be to tune the threshold as part of the hyperparameter tuning using the `tailor` package as shown in the previous live session as well.
+
+
+
+
+### Code {-}
+The code of this chapter is summarized here.
+```{r show-code, ref.label=knitr::all_labels()}
+#| class.source: "codesummary"
+#| code-fold: true
+#| code-summary: "Show the code"
+#| echo: TRUE
+#| eval: FALSE
+```
